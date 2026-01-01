@@ -27,6 +27,11 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-## Run the Ingestion Entrypoint
+## Run a Markey Poll
 
-python -m src.ingestion.run_ingestion
+This command fetches a small slice of market data, writes a timestamped CSV
+to disk, updates a latest pointer, and logs a JSON run record.
+
+```bash
+python -m src.jobs.poll_market_data
+```
