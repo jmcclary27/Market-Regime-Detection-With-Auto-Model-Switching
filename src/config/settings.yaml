@@ -1,0 +1,11 @@
+market:
+  symbols:
+    - SPY
+  frequency: daily
+
+data:
+  raw_path: data/raw
+  processed_path: data/processed
+
+logging:
+  level: INFO
