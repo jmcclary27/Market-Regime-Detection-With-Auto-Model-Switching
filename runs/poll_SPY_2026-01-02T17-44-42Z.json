@@ -1,0 +1,10 @@
+{
+  "started_at_utc": "2026-01-02T17:44:42.284483+00:00",
+  "finished_at_utc": "2026-01-02T17:44:42.320607+00:00",
+  "symbol": "SPY",
+  "start_date": "2020-01-01",
+  "end_date": "2020-01-10",
+  "output_path": "data\\raw\\SPY_2020-01-01_2020-01-10_2026-01-02T17-44-42Z.csv",
+  "latest_path": "data\\raw\\SPY_latest.csv",
+  "rows": 6
+}
