@@ -35,3 +35,17 @@ to disk, updates a latest pointer, and logs a JSON run record.
 ```bash
 python -m src.jobs.poll_market_data
 ```
+
+## Run Feature Pipeline (v0)
+
+This command builds deterministic features from a provided bars file and writes
+a parquet artifact and manifest to disk.
+
+```bash
+python -m src.features.run_features --input <bars.csv|bars.parquet> --timestamp <timestamp>
+```
+
+Outputs:
+
+- data/features/<timestamp>.parquet
+- data/features/<timestamp>.manifest.json (schema + content hash)
