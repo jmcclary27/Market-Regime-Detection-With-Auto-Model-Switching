@@ -1,3 +1,4 @@
+from .builder import build_features, FeatureBuildConfig
 """
 Feature pipeline v0.
 
