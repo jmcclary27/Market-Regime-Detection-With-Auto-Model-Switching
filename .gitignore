@@ -2,3 +2,6 @@ data/raw/
 data/features/
 runs/
 *.parquet
+data/regimes/
+.pytest_cache
+__pycache__/

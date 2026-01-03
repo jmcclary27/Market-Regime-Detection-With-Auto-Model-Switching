@@ -1,5 +1,9 @@
 # Language
 pthon=3.11.4
 
+# Data Manipuation
+pandas
+pyarrow
+
 # Market Dependencies
 yfinance
