@@ -27,7 +27,7 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-## Run a Markey Poll
+## Run a Market Poll
 
 This command fetches a small slice of market data, writes a timestamped CSV
 to disk, updates a latest pointer, and logs a JSON run record.
@@ -49,3 +49,24 @@ Outputs:
 
 - data/features/<timestamp>.parquet
 - data/features/<timestamp>.manifest.json (schema + content hash)
+
+## Run Regime Detection (v0, rule-based)
+
+This command labels each row with a simple rule-based market regime and writes
+a timestamped parquet artifact to disk. The output includes a
+`regime_explanation` column for debugging.
+
+```bash
+python -m src.regimes.run_regime_detection
+```
+
+Outputs:
+
+- data/regimes/regimes_<timestamp>.parquet
+
+Output columns (minimum):
+
+- timestamp
+- symbol
+- regime
+- regime_explanation
