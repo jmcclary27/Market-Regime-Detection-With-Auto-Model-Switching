@@ -1,0 +1,24 @@
+{
+  "rows": 790,
+  "cols": 8,
+  "columns": [
+    "timestamp",
+    "symbol",
+    "close",
+    "log_return_1",
+    "sma_10",
+    "regime",
+    "regime_explanation",
+    "target_next_return"
+  ],
+  "features_path": "data\\features\\test-run.parquet",
+  "regimes_path": "data\\regimes\\test-run.parquet",
+  "target_col": "target_next_return",
+  "timestamp_col": "timestamp",
+  "return_col": "log_return_1",
+  "regime_value_counts": {
+    "bearish": 416,
+    "bullish": 354,
+    "low_vol": 20
+  }
+}

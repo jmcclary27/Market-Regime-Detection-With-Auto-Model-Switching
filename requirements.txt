@@ -1,9 +1,11 @@
 # Language
 pthon=3.11.4
 
-# Data Manipuation
+# Machine Learning
+mlflow
 pandas
 pyarrow
+scikit-learn
 
 # Market Dependencies
 yfinance
