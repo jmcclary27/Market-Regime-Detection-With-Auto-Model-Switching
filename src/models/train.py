@@ -27,7 +27,7 @@ class TrainConfig:
 
     # Pretrained expert (loaded, not trained in this script)
     pretrained_expert_path: Path = Path("models/pretrained/expert_bullish_ridge_v0.joblib")
-    experts_dir: Path = Path("models/experts")  # will write to models/experts/<regime>/<run_ts>/
+    experts_dir: Path = Path("models/experts")  # writes to models/experts/<regime>/<run_ts>/
 
     # MLflow
     tracking_uri: str | None = None  # None means default local ./mlruns
@@ -45,6 +45,22 @@ class TrainConfig:
     # Baseline model config
     ridge_alpha: float = 1.0
     random_state: int = 42
+
+
+def _normalize_mlflow_uri(uri: str) -> str:
+    """
+    MLflow expects a URI with a scheme (file:, sqlite:, http:, ...).
+    On Windows, a raw path like C:\\tmp\\mlruns is parsed with scheme 'c' and fails.
+    Convert raw filesystem paths to file:// URIs.
+    """
+    u = uri.strip()
+
+    # Already a URI-like value
+    if "://" in u or u.startswith("file:"):
+        return u
+
+    # Treat as filesystem path
+    return Path(u).resolve().as_uri()
 
 
 def _load_parquet(path: Path) -> pd.DataFrame:
@@ -108,12 +124,7 @@ def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def evaluate_model(
-    model,
-    feature_cols: list[str],
-    df: pd.DataFrame,
-    target_col: str,
-) -> dict[str, float]:
+def evaluate_model(model, feature_cols: list[str], df: pd.DataFrame, target_col: str) -> dict[str, float]:
     X = df[feature_cols].to_numpy()
     y = df[target_col].to_numpy()
     pred = model.predict(X)
@@ -153,11 +164,9 @@ def register_expert_artifact(
     return versioned_model_path, latest_model_path
 
 
-def main() -> None:
-    cfg = TrainConfig()
-
+def run(cfg: TrainConfig) -> str:
     if cfg.tracking_uri:
-        mlflow.set_tracking_uri(cfg.tracking_uri)
+        mlflow.set_tracking_uri(_normalize_mlflow_uri(cfg.tracking_uri))
     mlflow.set_experiment(cfg.experiment_name)
 
     df = build_training_frame(cfg)
@@ -165,7 +174,6 @@ def main() -> None:
     run_ts = int(time.time())
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Dataset summary
     summary = {
         "rows": int(df.shape[0]),
         "cols": int(df.shape[1]),
@@ -178,10 +186,8 @@ def main() -> None:
         "regime_value_counts": df["regime"].value_counts().to_dict() if "regime" in df.columns else None,
     }
 
-    # Split
     train_df, val_df, test_df = time_split(df, cfg.timestamp_col, cfg.train_frac, cfg.val_frac)
 
-    # Feature cols for baseline (all numeric except excluded)
     exclude = {cfg.target_col, cfg.timestamp_col, "regime_explanation", "regime", "symbol", "symbol_x", "symbol_y"}
     baseline_feature_cols = select_feature_columns(df, exclude)
     if not baseline_feature_cols:
@@ -193,11 +199,9 @@ def main() -> None:
     # Train baseline
     X_train = train_df[baseline_feature_cols].to_numpy()
     y_train = train_df[cfg.target_col].to_numpy()
-
     baseline_model = Ridge(alpha=cfg.ridge_alpha, random_state=cfg.random_state)
     baseline_model.fit(X_train, y_train)
 
-    # Evaluate baseline on val/test
     baseline_val = evaluate_model(baseline_model, baseline_feature_cols, val_df, cfg.target_col)
     baseline_test = evaluate_model(baseline_model, baseline_feature_cols, test_df, cfg.target_col)
 
@@ -228,7 +232,6 @@ def main() -> None:
     expert_regime = str(expert_bundle.get("regime", "unknown"))
     expert_name = str(expert_bundle.get("model_name", cfg.pretrained_expert_path.stem))
 
-    # Validate expert features exist
     missing = [c for c in expert_feature_cols if c not in df.columns]
     if missing:
         raise KeyError(
@@ -236,21 +239,15 @@ def main() -> None:
             f"missing={missing}, available_cols={list(df.columns)}"
         )
 
-    # Evaluate expert on val/test (global), also evaluate on its own regime rows in val/test (regime-specific)
     expert_val = evaluate_model(expert_model, expert_feature_cols, val_df, cfg.target_col)
     expert_test = evaluate_model(expert_model, expert_feature_cols, test_df, cfg.target_col)
 
     val_reg_df = val_df[val_df["regime"] == expert_regime].copy() if "regime" in val_df.columns else val_df.iloc[0:0]
     test_reg_df = test_df[test_df["regime"] == expert_regime].copy() if "regime" in test_df.columns else test_df.iloc[0:0]
 
-    expert_val_reg = None
-    expert_test_reg = None
-    if len(val_reg_df) > 0:
-        expert_val_reg = evaluate_model(expert_model, expert_feature_cols, val_reg_df, cfg.target_col)
-    if len(test_reg_df) > 0:
-        expert_test_reg = evaluate_model(expert_model, expert_feature_cols, test_reg_df, cfg.target_col)
+    expert_val_reg = evaluate_model(expert_model, expert_feature_cols, val_reg_df, cfg.target_col) if len(val_reg_df) else None
+    expert_test_reg = evaluate_model(expert_model, expert_feature_cols, test_reg_df, cfg.target_col) if len(test_reg_df) else None
 
-    # Write run artifacts
     run_meta_path = cfg.out_dir / f"run_pr4_dataset_{run_ts}.json"
     run_meta_path.write_text(json.dumps(summary, indent=2))
 
@@ -273,7 +270,6 @@ def main() -> None:
         )
     )
 
-    # Start MLflow run
     with mlflow.start_run(run_name=f"pr4_baseline_plus_expert_{run_ts}") as run:
         # Params
         mlflow.log_param("features_path", str(cfg.features_path))
@@ -288,12 +284,12 @@ def main() -> None:
         mlflow.log_param("n_val", int(len(val_df)))
         mlflow.log_param("n_test", int(len(test_df)))
 
-        # Baseline params
+        # Baseline
         mlflow.log_param("baseline_model_name", "baseline_ridge")
         mlflow.log_param("baseline_ridge_alpha", float(cfg.ridge_alpha))
         mlflow.log_param("baseline_n_features", int(len(baseline_feature_cols)))
 
-        # Expert params
+        # Expert
         mlflow.log_param("expert_model_name", expert_name)
         mlflow.log_param("expert_model_type", "pretrained_loaded")
         mlflow.log_param("expert_regime", expert_regime)
@@ -310,13 +306,12 @@ def main() -> None:
         mlflow.log_metric("baseline_test_mae", baseline_test["mae"])
         mlflow.log_metric("baseline_test_rmse", baseline_test["rmse"])
 
-        # Expert metrics (global)
+        # Expert metrics
         mlflow.log_metric("expert_val_mae", expert_val["mae"])
         mlflow.log_metric("expert_val_rmse", expert_val["rmse"])
         mlflow.log_metric("expert_test_mae", expert_test["mae"])
         mlflow.log_metric("expert_test_rmse", expert_test["rmse"])
 
-        # Expert metrics (only on its regime rows)
         if expert_val_reg is not None:
             mlflow.log_metric("expert_val_regime_mae", expert_val_reg["mae"])
             mlflow.log_metric("expert_val_regime_rmse", expert_val_reg["rmse"])
@@ -324,7 +319,7 @@ def main() -> None:
             mlflow.log_metric("expert_test_regime_mae", expert_test_reg["mae"])
             mlflow.log_metric("expert_test_regime_rmse", expert_test_reg["rmse"])
 
-        # Save expert into registry + latest pointers
+        # Register expert artifact + latest pointers
         expert_metadata = {
             "model_name": expert_name,
             "regime": expert_regime,
@@ -347,7 +342,7 @@ def main() -> None:
             metadata=expert_metadata,
         )
 
-        # Log artifacts
+        # Artifacts
         mlflow.log_artifact(str(run_meta_path))
         mlflow.log_artifact(str(split_summary_path))
         mlflow.log_artifact(str(baseline_model_path))
@@ -355,25 +350,13 @@ def main() -> None:
         mlflow.log_artifact(str(versioned_expert_path))
         mlflow.log_artifact(str(latest_expert_path))
 
-        # Prints
-        print("PR4 Step 3 complete, baseline + pretrained expert evaluated + logged.")
-        print(f"Rows, {summary['rows']}, Cols, {summary['cols']}")
-        if summary["regime_value_counts"] is not None:
-            print("Regime counts:", summary["regime_value_counts"])
-        print(f"Split sizes, train {len(train_df)}, val {len(val_df)}, test {len(test_df)}")
+        return run.info.run_id
 
-        print(f"Baseline val RMSE, {baseline_val['rmse']}, test RMSE, {baseline_test['rmse']}")
-        print(f"Expert ({expert_name}) val RMSE, {expert_val['rmse']}, test RMSE, {expert_test['rmse']}")
-        print(f"Expert regime, {expert_regime}, val rows, {len(val_reg_df)}, test rows, {len(test_reg_df)}")
-        if expert_val_reg is not None:
-            print(f"Expert regime-only val RMSE, {expert_val_reg['rmse']}")
-        if expert_test_reg is not None:
-            print(f"Expert regime-only test RMSE, {expert_test_reg['rmse']}")
 
-        print(f"Saved baseline model, {baseline_model_path}")
-        print(f"Registered expert model, {versioned_expert_path}")
-        print(f"Updated expert latest, {latest_expert_path}")
-        print("MLflow run_id:", run.info.run_id)
+def main() -> None:
+    cfg = TrainConfig()
+    run_id = run(cfg)
+    print("Done. MLflow run_id:", run_id)
 
 
 if __name__ == "__main__":
