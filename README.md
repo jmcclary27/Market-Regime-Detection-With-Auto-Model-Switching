@@ -70,3 +70,23 @@ Output columns (minimum):
 - symbol
 - regime
 - regime_explanation
+
+## Run Machine Learning Parts
+
+- Generate fixture data
+
+```bash
+python tools/make_training_fixture.py
+```
+
+- Create the pretrained expert artifact
+
+```bash
+python tools/make_pretrained_expert.py
+```
+
+- Run training
+
+```bash
+python -m src.models.train
+```
