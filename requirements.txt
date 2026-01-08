@@ -5,6 +5,7 @@ pthon=3.11.4
 mlflow
 pandas
 pyarrow
+pyyaml
 scikit-learn
 
 # Market Dependencies
