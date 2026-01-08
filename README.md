@@ -105,3 +105,25 @@ This project supports **batch inference across all available models** (baseline,
 ```bash
 python -m src.inference.batch_predict
 ```
+
+## Evaluator + Scorecards
+
+This project includes an evaluator that compares all models, overall and per market regime, and writes a scorecard artifact that will be consumed by the auto-switching logic.
+
+### Inputs
+
+The evaluator expects the latest pipeline artifacts:
+
+- `data/features/latest.parquet`
+- `data/regimes/latest.parquet`
+- `data/predictions/latest.parquet`
+
+Notes:
+- `data/predictions/latest.parquet` is long-form and contains `row_id`, `model_name`, and `y_pred`.
+- `data/features/latest.parquet` and `data/regimes/latest.parquet` do not contain `row_id`, so the evaluator reconstructs it deterministically by sorting by `timestamp` then `symbol`, then setting `row_id = index`.
+
+### Run evaluator
+
+```bash
+python -m src.eval.run_evaluator
+```
