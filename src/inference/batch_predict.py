@@ -7,7 +7,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import joblib
 import pandas as pd
@@ -19,12 +19,10 @@ class BatchPredictConfig:
     models_dir: Path = Path("models")
     output_dir: Path = Path("data/predictions")
     runs_dir: Path = Path("data/runs")
-    # if your training uses a different target name, change this
     target_col: str = "target"
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
-    """Return newest directory with numeric name under parent."""
     candidates = [p for p in parent.iterdir() if p.is_dir() and p.name.isdigit()]
     if not candidates:
         raise RuntimeError(f"No timestamped dirs found in {parent}")
@@ -32,16 +30,9 @@ def _latest_timestamp_dir(parent: Path) -> Path:
 
 
 def discover_models(models_dir: Path) -> List[Dict[str, str]]:
-    """
-    Discover models according to your repo's contract:
-
-    - models/baseline/<ts>/model.joblib                  -> model_name="baseline"
-    - models/experts/<regime>/latest.joblib              -> model_name=f"expert_<regime>"
-    - models/pretrained/*.joblib                         -> model_name=stem
-    """
     models: List[Dict[str, str]] = []
 
-    # ---- baseline ----
+    # baseline: models/baseline/<ts>/model.joblib
     baseline_root = models_dir / "baseline"
     if baseline_root.exists():
         latest_dir = _latest_timestamp_dir(baseline_root)
@@ -55,7 +46,7 @@ def discover_models(models_dir: Path) -> List[Dict[str, str]]:
                 }
             )
 
-    # ---- experts ----
+    # experts: models/experts/<regime>/latest.joblib
     experts_root = models_dir / "experts"
     if experts_root.exists():
         for regime_dir in experts_root.iterdir():
@@ -71,7 +62,7 @@ def discover_models(models_dir: Path) -> List[Dict[str, str]]:
                     }
                 )
 
-    # ---- pretrained ----
+    # pretrained: models/pretrained/*.joblib
     pretrained_root = models_dir / "pretrained"
     if pretrained_root.exists():
         for model_path in pretrained_root.glob("*.joblib"):
@@ -88,19 +79,12 @@ def discover_models(models_dir: Path) -> List[Dict[str, str]]:
             f"No models discovered. Looked under: {models_dir}/baseline, {models_dir}/experts, {models_dir}/pretrained"
         )
 
-    # deterministic ordering for easier debugging
+    # deterministic order
     models.sort(key=lambda m: (m["model_source"], m["model_name"], m["model_path"]))
     return models
 
 
 def _unwrap_model(obj: Any) -> Any:
-    """
-    Your joblib artifacts may be either:
-      - a model/pipeline with .predict
-      - a dict wrapper like {"model": estimator, "metadata": ...}
-
-    Return the predict()-able estimator/pipeline.
-    """
     if hasattr(obj, "predict"):
         return obj
 
@@ -114,55 +98,92 @@ def _unwrap_model(obj: Any) -> Any:
     )
 
 
-def _align_features_if_possible(model: Any, X: pd.DataFrame) -> pd.DataFrame:
+def _align_X_for_model(model: Any, X: pd.DataFrame) -> pd.DataFrame:
     """
-    If sklearn model exposes feature_names_in_, align X to those columns.
-    If not available, return X unchanged.
+    Align X to what the model expects.
+
+    Priority:
+    1) If sklearn model exposes feature_names_in_, use those columns in that order.
+    2) Otherwise, fall back to expected feature count. If X has extra cols, take first n.
     """
+    # 1) Feature-name alignment (best)
     names = getattr(model, "feature_names_in_", None)
-    if names is None:
+    if names is not None:
+        names = list(names)
+        missing = [c for c in names if c not in X.columns]
+        if missing:
+            raise RuntimeError(f"Missing required feature columns for model: {missing}")
+        return X.loc[:, names]
+
+    # 2) Count-based fallback (works when model was trained on numpy arrays)
+    n_expected = getattr(model, "n_features_in_", None)
+    if n_expected is None:
+        # Some pipelines may not expose this; just return X and let sklearn error if needed
         return X
 
-    names = list(names)
-    missing = [c for c in names if c not in X.columns]
-    if missing:
-        raise RuntimeError(f"Missing required feature columns for model: {missing}")
+    n_expected = int(n_expected)
+    if X.shape[1] < n_expected:
+        raise RuntimeError(
+            f"X has {X.shape[1]} features but model expects {n_expected}. "
+            "Not enough features to run inference."
+        )
 
-    return X.loc[:, names]
+    if X.shape[1] > n_expected:
+        # Deterministic: take first n columns in current order
+        return X.iloc[:, :n_expected]
+
+    return X
+
+
+def _make_numeric_X(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str]]:
+    """
+    Convert datetime columns to int64 nanoseconds.
+    Drop any remaining non-numeric columns (object/string).
+    Return: (X_numeric, converted_cols, dropped_cols)
+    """
+    X = df.copy()
+    converted: List[str] = []
+    dropped: List[str] = []
+
+    # Convert datetime64 columns to int64
+    for col in list(X.columns):
+        if pd.api.types.is_datetime64_any_dtype(X[col]):
+            X[col] = X[col].astype("int64")
+            converted.append(col)
+
+    # Drop anything still non-numeric (object, string, mixed)
+    non_numeric = [c for c in X.columns if not pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c])]
+    if non_numeric:
+        X = X.drop(columns=non_numeric)
+        dropped.extend(non_numeric)
+
+    # Convert bool -> int (safe for sklearn)
+    bool_cols = [c for c in X.columns if pd.api.types.is_bool_dtype(X[c])]
+    for c in bool_cols:
+        X[c] = X[c].astype(int)
+
+    return X, converted, dropped
 
 
 def _safe_pred_value(v: Any) -> Any:
-    """
-    Store predictions safely without assuming numeric type.
-    - numeric -> float
-    - Timestamp/datetime -> ISO string
-    - anything else -> string
-    """
+    # Keep datetimes as ISO strings if they ever appear
     if isinstance(v, pd.Timestamp):
         return v.isoformat()
 
-    # Handle numpy scalar types gracefully
+    # numpy scalars -> python scalars
     try:
         if hasattr(v, "item"):
             v = v.item()
     except Exception:
         pass
 
-    # numeric
+    # normal numeric predictions
     try:
         return float(v)
     except Exception:
         pass
 
-    # datetime-ish that isn't pd.Timestamp
-    try:
-        ts = pd.Timestamp(v)
-        # if conversion succeeded and isn't NaT, store as ISO
-        if ts is not pd.NaT:
-            return ts.isoformat()
-    except Exception:
-        pass
-
+    # fallback
     return str(v)
 
 
@@ -172,19 +193,26 @@ def run(config: BatchPredictConfig) -> Path:
     if not config.features_path.exists():
         raise FileNotFoundError(f"Features file not found: {config.features_path}")
 
-    # ---- Load features ----
     df = pd.read_parquet(config.features_path)
 
     # Build X by dropping target if present
-    X = df.drop(columns=[config.target_col], errors="ignore").copy()
+    X_raw = df.drop(columns=[config.target_col], errors="ignore").copy()
 
-    # row_id: stable integer id
-    # If index is integer-like, use it; otherwise reset.
-    if pd.api.types.is_integer_dtype(X.index):
-        row_ids = X.index.astype(int)
-    else:
-        X = X.reset_index(drop=True)
-        row_ids = X.index.astype(int)
+    # If index is not integer-like, reset so row_id is stable ints
+    if not pd.api.types.is_integer_dtype(X_raw.index):
+        X_raw = X_raw.reset_index(drop=True)
+
+    row_ids = X_raw.index.astype(int)
+
+    # Make X numeric (fixes your Timestamp -> float crash)
+    X, converted_cols, dropped_cols = _make_numeric_X(X_raw)
+
+    if X.shape[1] == 0:
+        raise RuntimeError(
+            "After preprocessing, X has 0 usable numeric feature columns. "
+            "Your features parquet may be mostly timestamps/strings. "
+            f"Dropped columns: {dropped_cols}"
+        )
 
     models = discover_models(config.models_dir)
 
@@ -197,7 +225,7 @@ def run(config: BatchPredictConfig) -> Path:
             loaded = joblib.load(model_path)
             model = _unwrap_model(loaded)
 
-            X_aligned = _align_features_if_possible(model, X)
+            X_aligned = _align_X_for_model(model, X)
             preds = model.predict(X_aligned)
 
             for rid, pred in zip(row_ids, preds):
@@ -236,7 +264,6 @@ def run(config: BatchPredictConfig) -> Path:
         .reset_index(drop=True)
     )
 
-    # ---- Write outputs ----
     config.output_dir.mkdir(parents=True, exist_ok=True)
     output_path = config.output_dir / f"predictions_{ts}.parquet"
     out_df.to_parquet(output_path, index=False)
@@ -244,7 +271,6 @@ def run(config: BatchPredictConfig) -> Path:
     latest_path = config.output_dir / "latest.parquet"
     shutil.copyfile(output_path, latest_path)
 
-    # ---- Write run metadata ----
     config.runs_dir.mkdir(parents=True, exist_ok=True)
     run_meta: Dict[str, Any] = {
         "run_type": "batch_inference",
@@ -256,6 +282,11 @@ def run(config: BatchPredictConfig) -> Path:
         "num_prediction_rows": int(len(out_df)),
         "num_models_succeeded": int(out_df["model_name"].nunique()),
         "failed_models": failed,
+        "feature_preprocessing": {
+            "converted_datetime_cols": converted_cols,
+            "dropped_non_numeric_cols": dropped_cols,
+            "final_num_features": int(X.shape[1]),
+        },
     }
 
     with open(config.runs_dir / f"run_{ts}.json", "w", encoding="utf-8") as f:
@@ -265,9 +296,7 @@ def run(config: BatchPredictConfig) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Batch inference across all models (shadow predictions)."
-    )
+    parser = argparse.ArgumentParser(description="Batch inference across all models (shadow predictions).")
     parser.add_argument(
         "--features-path",
         type=Path,
@@ -278,14 +307,11 @@ def main() -> None:
         "--target-col",
         type=str,
         default="target",
-        help="Target column name to drop from features before inference (if present). Default: target",
+        help="Target column to drop if present. Default: target",
     )
     args = parser.parse_args()
 
-    config = BatchPredictConfig(
-        features_path=args.features_path,
-        target_col=args.target_col,
-    )
+    config = BatchPredictConfig(features_path=args.features_path, target_col=args.target_col)
     out_path = run(config)
     print(f"Wrote predictions: {out_path}")
     print(f"Updated latest: {config.output_dir / 'latest.parquet'}")
