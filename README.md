@@ -127,3 +127,27 @@ Notes:
 ```bash
 python -m src.eval.run_evaluator
 ```
+
+## Model Registry (Active Model Pointer)
+
+This project uses a lightweight **local model registry** to track which model is
+currently active for inference.
+
+The active model is defined by a single pointer file: registry/active_model.yamlv
+
+
+This file specifies the exact model artifact to load (type, version, path), making
+model selection **deterministic and reproducible**.
+
+### Why this exists
+- Avoids relying on filesystem heuristics like `latest.joblib`
+- Enables safe model switching and rollback
+- Keeps inference decoupled from training details
+
+### Usage
+- Batch inference loads the active model via the registry when configured
+- Shadow predictions are still run for all discovered models
+- Switching the active model is as simple as updating `active_model.yaml`
+
+This registry is intentionally minimal and local-first, it does not depend on any
+external services.
