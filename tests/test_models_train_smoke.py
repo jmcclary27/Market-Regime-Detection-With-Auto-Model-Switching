@@ -21,13 +21,13 @@ def test_train_produces_artifacts(tmp_path: Path) -> None:
     (models_dir / "pretrained").mkdir(parents=True, exist_ok=True)
 
     # Copy fixture parquet files from repo into tmp_path
-    repo_feat = Path("data/features/test-run.parquet")
-    repo_reg = Path("data/regimes/test-run.parquet")
-    assert repo_feat.exists(), "Missing repo fixture: data/features/test-run.parquet"
-    assert repo_reg.exists(), "Missing repo fixture: data/regimes/test-run.parquet"
+    repo_feat = Path("data/features/latest.parquet")
+    repo_reg = Path("data/regimes/latest.parquet")
+    assert repo_feat.exists(), "Missing repo fixture: data/features/latest.parquet"
+    assert repo_reg.exists(), "Missing repo fixture: data/regimes/latest.parquet"
 
-    tmp_feat = data_dir / "features" / "test-run.parquet"
-    tmp_reg = data_dir / "regimes" / "test-run.parquet"
+    tmp_feat = data_dir / "features" / "latest.parquet"
+    tmp_reg = data_dir / "regimes" / "latest.parquet"
     shutil.copy2(repo_feat, tmp_feat)
     shutil.copy2(repo_reg, tmp_reg)
 
