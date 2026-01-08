@@ -90,3 +90,18 @@ python tools/make_pretrained_expert.py
 ```bash
 python -m src.models.train
 ```
+
+## Batch Inference & Shadow Predictions
+
+This project supports **batch inference across all available models** (baseline, regime experts, and pretrained models) to produce **shadow predictions** for comparison and monitoring.
+
+### Purpose
+- Run inference for *every* model on the same feature set
+- Enable side-by-side comparison between active and shadow models
+- Provide the data needed for future **model selection and auto-switching**
+
+### How to Run
+
+```bash
+python -m src.inference.batch_predict
+```
