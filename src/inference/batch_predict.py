@@ -7,10 +7,12 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import joblib
 import pandas as pd
+
+from src.registry.registry import ACTIVE_FILE, RegistryError, load_active_model
 
 
 @dataclass
@@ -20,6 +22,7 @@ class BatchPredictConfig:
     output_dir: Path = Path("data/predictions")
     runs_dir: Path = Path("data/runs")
     target_col: str = "target"
+    active_file: Optional[Path] = None
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
@@ -152,7 +155,11 @@ def _make_numeric_X(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str
             converted.append(col)
 
     # Drop anything still non-numeric (object, string, mixed)
-    non_numeric = [c for c in X.columns if not pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c])]
+    non_numeric = [
+        c
+        for c in X.columns
+        if not pd.api.types.is_numeric_dtype(X[c]) and not pd.api.types.is_bool_dtype(X[c])
+    ]
     if non_numeric:
         X = X.drop(columns=non_numeric)
         dropped.extend(non_numeric)
@@ -187,6 +194,15 @@ def _safe_pred_value(v: Any) -> Any:
     return str(v)
 
 
+def _spec_to_registry_key(spec: Dict[str, str]) -> str:
+    """
+    Provide a stable identifier for a discovered model spec, used to mark is_active
+    even when the active model is discovered via "latest.joblib" but points to a
+    specific timestamp path in the registry.
+    """
+    return f"{spec['model_source']}::{spec['model_name']}::{spec['model_path']}"
+
+
 def run(config: BatchPredictConfig) -> Path:
     ts = int(time.time())
 
@@ -214,11 +230,73 @@ def run(config: BatchPredictConfig) -> Path:
             f"Dropped columns: {dropped_cols}"
         )
 
+    # Discover all models for shadow predictions
     models = discover_models(config.models_dir)
+
+    # Load active model via registry (opt-in)
+    active_load_error: str | None = None
+    active_ref_dict: Dict[str, Any] | None = None
+    active_artifact_path: str | None = None
+    active_model = None
+    active_meta = None
+
+    if config.active_file is not None and config.active_file.exists():
+        try:
+            active_model_obj, active_meta, active_ref = load_active_model(active_file=config.active_file)
+            active_model = _unwrap_model(active_model_obj)
+            active_ref_dict = {
+                "model_type": active_ref.model_type,
+                "regime": active_ref.regime,
+                "model_id": active_ref.model_id,
+                "version": active_ref.version,
+                "artifact_path": active_ref.artifact_path.as_posix(),
+                "metadata_path": active_ref.metadata_path.as_posix() if active_ref.metadata_path else None,
+                "updated_at": active_ref.updated_at,
+            }
+            active_artifact_path = active_ref.artifact_path.as_posix()
+        except RegistryError as e:
+            active_load_error = repr(e)
 
     rows: List[Dict[str, Any]] = []
     failed: List[Dict[str, str]] = []
 
+    # 1) Run active model first (if available) and label it explicitly
+    if active_model is not None and active_artifact_path is not None:
+        try:
+            X_aligned = _align_X_for_model(active_model, X)
+            preds = active_model.predict(X_aligned)
+
+            for rid, pred in zip(row_ids, preds):
+                rows.append(
+                    {
+                        "row_id": int(rid),
+                        "model_name": "active",
+                        "model_source": "registry",
+                        "y_pred": _safe_pred_value(pred),
+                        "inference_ts": ts,
+                        "features_path": str(config.features_path),
+                        "model_path": active_artifact_path,
+                        "is_active": True,
+                        "active_model_type": active_ref_dict["model_type"],
+                        "active_model_id": active_ref_dict["model_id"],
+                        "active_model_version": active_ref_dict["version"],
+                        "active_regime": active_ref_dict["regime"],
+                    }
+                )
+        except Exception as e:
+            failed.append(
+                {
+                    "model_name": "active",
+                    "model_source": "registry",
+                    "model_path": str(active_artifact_path),
+                    "error": repr(e),
+                }
+            )
+
+    # 2) Run shadow predictions for all discovered models
+    # Mark is_active by comparing resolved artifact path if possible.
+    # If your discovered spec uses latest.joblib, it won't match the active timestamp path,
+    # so we ONLY set is_active=True for the explicit registry row above.
     for spec in models:
         model_path = Path(spec["model_path"])
         try:
@@ -238,6 +316,11 @@ def run(config: BatchPredictConfig) -> Path:
                         "inference_ts": ts,
                         "features_path": str(config.features_path),
                         "model_path": str(model_path),
+                        "is_active": False,
+                        "active_model_type": active_ref_dict["model_type"] if active_ref_dict else None,
+                        "active_model_id": active_ref_dict["model_id"] if active_ref_dict else None,
+                        "active_model_version": active_ref_dict["version"] if active_ref_dict else None,
+                        "active_regime": active_ref_dict["regime"] if active_ref_dict else None,
                     }
                 )
 
@@ -260,7 +343,7 @@ def run(config: BatchPredictConfig) -> Path:
 
     out_df = (
         pd.DataFrame(rows)
-        .sort_values(["row_id", "model_name"], kind="mergesort")
+        .sort_values(["row_id", "model_source", "model_name"], kind="mergesort")
         .reset_index(drop=True)
     )
 
@@ -280,12 +363,17 @@ def run(config: BatchPredictConfig) -> Path:
         "output_path": str(output_path),
         "latest_path": str(latest_path),
         "num_prediction_rows": int(len(out_df)),
-        "num_models_succeeded": int(out_df["model_name"].nunique()),
+        "num_models_succeeded": int(out_df[["model_source", "model_name"]].drop_duplicates().shape[0]),
         "failed_models": failed,
         "feature_preprocessing": {
             "converted_datetime_cols": converted_cols,
             "dropped_non_numeric_cols": dropped_cols,
             "final_num_features": int(X.shape[1]),
+        },
+        "active_registry": {
+            "active_file": str(config.active_file),
+            "active_ref": active_ref_dict,
+            "active_load_error": active_load_error,
         },
     }
 
@@ -296,7 +384,9 @@ def run(config: BatchPredictConfig) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Batch inference across all models (shadow predictions).")
+    parser = argparse.ArgumentParser(
+        description="Batch inference across all models (active + shadow predictions)."
+    )
     parser.add_argument(
         "--features-path",
         type=Path,
@@ -309,9 +399,19 @@ def main() -> None:
         default="target",
         help="Target column to drop if present. Default: target",
     )
+    parser.add_argument(
+        "--active-file",
+        type=Path,
+        default=ACTIVE_FILE,
+        help="Path to registry active model yaml. Default: registry/active_model.yaml",
+    )
     args = parser.parse_args()
 
-    config = BatchPredictConfig(features_path=args.features_path, target_col=args.target_col)
+    config = BatchPredictConfig(
+        features_path=args.features_path,
+        target_col=args.target_col,
+        active_file=args.active_file,
+    )
     out_path = run(config)
     print(f"Wrote predictions: {out_path}")
     print(f"Updated latest: {config.output_dir / 'latest.parquet'}")
