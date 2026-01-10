@@ -151,3 +151,51 @@ model selection **deterministic and reproducible**.
 
 This registry is intentionally minimal and local-first, it does not depend on any
 external services.
+
+## Regime-Aware Switching & Canary Windows
+
+PR 9 extends the canary switcher introduced in PR 8 by making model switching **regime-aware** and enforcing **explicit canary windows** before decisions are allowed.
+
+### Goals
+
+- Ensure model promotions are **context-sensitive** to the current market regime
+- Prevent premature switching by requiring sufficient evaluation evidence
+- Increase robustness and realism of the deployment logic
+
+### Planned Additions
+
+**1. Regime-Aware Promotion Logic**
+- Read the current regime from `data/regimes/latest.parquet`
+- Evaluate candidate vs active performance **within the active regime**
+- Promotion requires the candidate to outperform the active model in:
+  - the current regime, or
+  - a weighted combination of recent regimes
+
+**2. Enforced Canary Windows**
+- Require a minimum number of evaluations (`N`) before allowing:
+  - promote
+  - rollback
+- Canary state persists across runs until the window is satisfied
+- Window progress inferred from deployment events and/or scorecards
+
+**3. Canary State Tracking**
+- Track whether a candidate is:
+  - newly introduced
+  - mid-canary
+  - completed (decision eligible)
+- State derived from deployment event history (no mutable state)
+
+**4. Safety Guards**
+- Automatic rollback on:
+  - missing metrics
+  - NaNs or infinite values
+  - sudden large error spikes
+- Explicit `blocked` or `invalid` decision states logged to events
+
+### Outputs
+
+- Extended deployment events with:
+  - regime context
+  - canary progress
+  - decision eligibility flags
+- More reliable and explainable model switching behavior
