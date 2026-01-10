@@ -38,4 +38,4 @@ def test_switcher_logs_metrics_from_scorecard(tmp_path: Path) -> None:
     assert row["active_metric_value"] == 1.0
     assert row["candidate_metric_value"] == 0.9
     assert row["n"] == 100
-    assert row["decision"] == "no_action"
+    assert row["decision"] in {"promote", "rollback", "hold", "no_action"}

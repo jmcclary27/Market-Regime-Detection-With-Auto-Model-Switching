@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 
@@ -22,8 +22,15 @@ class SwitchConfig:
     window_type: str = "count"
     window_value: int = 100
     metric_name: str = "rmse"
+
+    # Candidate must be better than active by at least promote_margin to promote
     promote_margin: float = 0.0
+
+    # Candidate is considered clearly worse if it is worse than active by rollback_margin
     rollback_margin: float = 0.0
+
+    # Whether to actually update registry/active_model.yaml when promoting
+    update_registry_on_promote: bool = True
 
 
 # ---------- Event schema ----------
@@ -54,34 +61,38 @@ def append_event(events_path: Path, event: Dict[str, Any]) -> None:
     """
     events_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Build single-row DF with enforced column order
     row = {col: event.get(col) for col in EVENT_COLUMNS}
     df_new = pd.DataFrame([row], columns=EVENT_COLUMNS)
 
     if not events_path.exists():
-        # First write: just write schema-consistent DF
         df_new.to_parquet(events_path, index=False)
         return
 
     df_existing = pd.read_parquet(events_path)
 
-    # Ensure both frames have exactly the same columns in the same order
     df_existing = df_existing.reindex(columns=EVENT_COLUMNS)
     df_new = df_new.reindex(columns=EVENT_COLUMNS)
 
-    # Concatenate (schema-aligned)
     df = pd.concat([df_existing, df_new], ignore_index=True)
+
+    # Optional: keep n as a nullable integer column when possible
+    if "n" in df.columns:
+        try:
+            df["n"] = df["n"].astype("Int64")
+        except Exception:
+            pass
 
     df.to_parquet(events_path, index=False)
 
 
+def write_active_model_yaml(registry_path: Path, model_id: str) -> None:
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+    registry_path.write_text(f"model_id: {model_id}\n", encoding="utf-8")
+
+
 def infer_model_id_col(df: Optional[pd.DataFrame]) -> Optional[str]:
-    """
-    Your scorecards currently use 'model_name'. We also support other common names.
-    """
     if df is None:
         return None
-
     candidates = ["model_name", "model_id", "model", "model_key", "id"]
     for c in candidates:
         if c in df.columns:
@@ -97,16 +108,10 @@ def load_latest_scorecard(scorecards_dir: Path) -> Optional[pd.DataFrame]:
 
 
 def _prefer_overall_rows(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Prefer the overall aggregate row if present.
-    - scope == "overall"
-    - regime is null
-    """
     sub = df
     if "scope" in sub.columns:
         sub = sub[sub["scope"] == "overall"]
     if "regime" in sub.columns:
-        # regime None shows up as NaN in pandas
         sub = sub[sub["regime"].isna()]
     return sub
 
@@ -136,9 +141,6 @@ def extract_metric(
 
 
 def extract_n(df: pd.DataFrame, *, model_id: str) -> Optional[int]:
-    """
-    Extract sample count for the chosen (overall) row.
-    """
     id_col = infer_model_id_col(df)
     if id_col is None or "n" not in df.columns:
         return None
@@ -155,6 +157,29 @@ def extract_n(df: pd.DataFrame, *, model_id: str) -> Optional[int]:
     return int(val)
 
 
+def decide(
+    *,
+    active_metric: float,
+    candidate_metric: float,
+    promote_margin: float,
+    rollback_margin: float,
+) -> Tuple[str, str]:
+    """
+    Lower is better.
+    Returns (decision, reason).
+    decision ∈ {"promote", "rollback", "hold"}
+    """
+    # candidate better by margin => promote
+    if candidate_metric <= active_metric - promote_margin:
+        return "promote", "candidate_better_than_active"
+
+    # candidate worse by rollback margin => rollback
+    if candidate_metric >= active_metric + rollback_margin:
+        return "rollback", "candidate_worse_than_active"
+
+    return "hold", "within_margins"
+
+
 # ---------- Switcher ----------
 
 def run_switcher(
@@ -165,18 +190,18 @@ def run_switcher(
     candidate_model_id: str = "expert_bullish",
 ) -> None:
     """
-    v0 behavior (PR 8 Step 2):
-    - Count-based window concept only (window_value is recorded, not enforced yet)
-    - Reads latest scorecard from data/scorecards/latest.parquet
-    - Logs active vs candidate metric into data/deployments/events.parquet
-    - Does NOT promote/rollback yet (decision is always "no_action")
+    Step 3 behavior:
+    - Load latest scorecard
+    - Extract active vs candidate metric (overall)
+    - Decide: promote / rollback / hold
+    - Log deployment event
+    - If promote and update_registry_on_promote=True, update registry/active_model.yaml
     """
     events_path = data_dir / "deployments" / "events.parquet"
     scorecards_dir = data_dir / "scorecards"
 
     scorecard = load_latest_scorecard(scorecards_dir)
 
-    # No scorecard? Log it and return (don’t crash).
     if scorecard is None:
         append_event(
             events_path,
@@ -198,7 +223,6 @@ def run_switcher(
         )
         return
 
-    # Scorecard exists but no recognizable model id column? Log it and return.
     id_col = infer_model_id_col(scorecard)
     if id_col is None:
         append_event(
@@ -231,29 +255,68 @@ def run_switcher(
         model_id=candidate_model_id,
         metric_name=config.metric_name,
     )
-
-    # This is just a convenience debug signal; uses active model row.
     n_val = extract_n(scorecard, model_id=active_model_id)
 
-    reason = "metrics_logged"
     if active_metric is None or candidate_metric is None:
-        reason = "metrics_missing_for_model_id_or_metric"
+        append_event(
+            events_path,
+            {
+                "ts": datetime.now(timezone.utc).isoformat(),
+                "event_type": "canary_evaluated",
+                "active_model_id_before": active_model_id,
+                "candidate_model_id": candidate_model_id,
+                "active_model_id_after": active_model_id,
+                "window_type": config.window_type,
+                "window_value": config.window_value,
+                "n": n_val,
+                "metric_name": config.metric_name,
+                "active_metric_value": active_metric,
+                "candidate_metric_value": candidate_metric,
+                "decision": "no_action",
+                "reason": "metrics_missing_for_model_id_or_metric",
+            },
+        )
+        return
+
+    decision, reason = decide(
+        active_metric=active_metric,
+        candidate_metric=candidate_metric,
+        promote_margin=config.promote_margin,
+        rollback_margin=config.rollback_margin,
+    )
+
+    active_after = active_model_id
+    event_type = "canary_evaluated"
+
+    if decision == "promote":
+        active_after = candidate_model_id
+        event_type = "promoted"
+        if config.update_registry_on_promote:
+            project_root = data_dir.parent
+            registry_path = project_root / "registry" / "active_model.yaml"
+            write_active_model_yaml(registry_path, candidate_model_id)
+
+    elif decision == "rollback":
+        event_type = "rollback"
+
+    else:  # hold
+        event_type = "hold"
 
     append_event(
         events_path,
         {
             "ts": datetime.now(timezone.utc).isoformat(),
-            "event_type": "canary_evaluated",
+            "event_type": event_type,
             "active_model_id_before": active_model_id,
             "candidate_model_id": candidate_model_id,
-            "active_model_id_after": active_model_id,
+            "active_model_id_after": active_after,
             "window_type": config.window_type,
             "window_value": config.window_value,
             "n": n_val,
             "metric_name": config.metric_name,
             "active_metric_value": active_metric,
             "candidate_metric_value": candidate_metric,
-            "decision": "no_action",
+            "decision": decision,
             "reason": reason,
         },
     )
