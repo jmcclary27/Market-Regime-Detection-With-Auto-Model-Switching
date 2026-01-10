@@ -50,17 +50,27 @@ EVENT_COLUMNS = [
 def append_event(events_path: Path, event: Dict[str, Any]) -> None:
     """
     Append a single event row to an append-only parquet log.
+    Avoid pandas concat dtype warnings by enforcing schema.
     """
     events_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Build single-row DF with enforced column order
     row = {col: event.get(col) for col in EVENT_COLUMNS}
-    df_new = pd.DataFrame([row])
+    df_new = pd.DataFrame([row], columns=EVENT_COLUMNS)
 
-    if events_path.exists():
-        df_existing = pd.read_parquet(events_path)
-        df = pd.concat([df_existing, df_new], ignore_index=True)
-    else:
-        df = df_new
+    if not events_path.exists():
+        # First write: just write schema-consistent DF
+        df_new.to_parquet(events_path, index=False)
+        return
+
+    df_existing = pd.read_parquet(events_path)
+
+    # Ensure both frames have exactly the same columns in the same order
+    df_existing = df_existing.reindex(columns=EVENT_COLUMNS)
+    df_new = df_new.reindex(columns=EVENT_COLUMNS)
+
+    # Concatenate (schema-aligned)
+    df = pd.concat([df_existing, df_new], ignore_index=True)
 
     df.to_parquet(events_path, index=False)
 
