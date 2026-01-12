@@ -194,6 +194,24 @@ def _safe_pred_value(v: Any) -> Any:
     return str(v)
 
 
+def _drop_nan_rows(X: pd.DataFrame, row_ids: pd.Index) -> tuple[pd.DataFrame, pd.Index]:
+    """
+    Drop rows with any NaN/inf values (Ridge can't handle NaNs).
+    Returns filtered (X_clean, row_ids_clean) preserving alignment.
+    Works with RangeIndex (no .loc needed).
+    """
+    X2 = X.replace([float("inf"), float("-inf")], pd.NA)
+    mask = X2.notna().all(axis=1)  # pandas Series[bool] aligned to X index
+
+    X_clean = X.loc[mask].copy()
+
+    # row_ids might be a RangeIndex, use positional boolean mask
+    mask_np = mask.to_numpy()
+    row_ids_clean = row_ids[mask_np]
+
+    return X_clean, row_ids_clean
+
+
 def _spec_to_registry_key(spec: Dict[str, str]) -> str:
     """
     Provide a stable identifier for a discovered model spec, used to mark is_active
@@ -218,10 +236,11 @@ def run(config: BatchPredictConfig) -> Path:
     if not pd.api.types.is_integer_dtype(X_raw.index):
         X_raw = X_raw.reset_index(drop=True)
 
-    row_ids = X_raw.index.astype(int)
+    row_ids = pd.Index(X_raw.index.astype(int))
 
     # Make X numeric (fixes your Timestamp -> float crash)
     X, converted_cols, dropped_cols = _make_numeric_X(X_raw)
+    nan_rows = int((~X.replace([float("inf"), float("-inf")], pd.NA).notna().all(axis=1)).sum())
 
     if X.shape[1] == 0:
         raise RuntimeError(
@@ -264,9 +283,14 @@ def run(config: BatchPredictConfig) -> Path:
     if active_model is not None and active_artifact_path is not None:
         try:
             X_aligned = _align_X_for_model(active_model, X)
-            preds = active_model.predict(X_aligned)
+            X_clean, row_ids_clean = _drop_nan_rows(X_aligned, row_ids)
 
-            for rid, pred in zip(row_ids, preds):
+            if len(X_clean) == 0:
+                raise RuntimeError("After dropping NaNs, no rows remain for active model inference.")
+
+            preds = active_model.predict(X_clean)
+
+            for rid, pred in zip(row_ids_clean, preds):
                 rows.append(
                     {
                         "row_id": int(rid),
@@ -304,9 +328,14 @@ def run(config: BatchPredictConfig) -> Path:
             model = _unwrap_model(loaded)
 
             X_aligned = _align_X_for_model(model, X)
-            preds = model.predict(X_aligned)
+            X_clean, row_ids_clean = _drop_nan_rows(X_aligned, row_ids)
 
-            for rid, pred in zip(row_ids, preds):
+            if len(X_clean) == 0:
+                raise RuntimeError("After dropping NaNs, no rows remain for this model inference.")
+
+            preds = model.predict(X_clean)
+
+            for rid, pred in zip(row_ids_clean, preds):
                 rows.append(
                     {
                         "row_id": int(rid),
@@ -356,6 +385,7 @@ def run(config: BatchPredictConfig) -> Path:
 
     config.runs_dir.mkdir(parents=True, exist_ok=True)
     run_meta: Dict[str, Any] = {
+        "rows_with_nan_or_inf": nan_rows,
         "run_type": "batch_inference",
         "timestamp": ts,
         "features_path": str(config.features_path),
@@ -381,6 +411,31 @@ def run(config: BatchPredictConfig) -> Path:
         json.dump(run_meta, f, indent=2)
 
     return output_path
+
+
+def run_stage(
+    *,
+    features_path: Path,
+    active_file: Path = ACTIVE_FILE,
+    target_col: str = "target",
+    models_dir: Path = Path("models"),
+    output_dir: Path = Path("data/predictions"),
+    runs_dir: Path = Path("data/runs"),
+) -> Path:
+    """
+    Orchestration-friendly entrypoint (PR 9).
+
+    Builds BatchPredictConfig and calls run(config).
+    """
+    cfg = BatchPredictConfig(
+        features_path=features_path,
+        models_dir=models_dir,
+        output_dir=output_dir,
+        runs_dir=runs_dir,
+        target_col=target_col,
+        active_file=active_file,
+    )
+    return run(cfg)
 
 
 def main() -> None:

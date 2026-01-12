@@ -322,6 +322,9 @@ def run_switcher(
     )
 
 
+def run() -> None:
+    main()
+
 # ---------- CLI ----------
 
 def main() -> None:

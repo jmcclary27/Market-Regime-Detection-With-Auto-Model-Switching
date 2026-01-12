@@ -15,6 +15,8 @@ from src.eval.metrics import (
     write_scorecard_artifacts,
 )
 
+def run() -> None:
+    main()
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -24,7 +26,7 @@ def main() -> None:
     ap.add_argument("--target-col", default="log_return_1")
     ap.add_argument("--min-regime-n", type=int, default=30)
     ap.add_argument("--out-dir", default="data/scorecards")
-    args = ap.parse_args()
+    args, _unknown = ap.parse_known_args()
 
     features_path = Path(args.features)
     regimes_path = Path(args.regimes)

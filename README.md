@@ -199,3 +199,24 @@ PR 9 extends the canary switcher introduced in PR 8 by making model switching **
   - canary progress
   - decision eligibility flags
 - More reliable and explainable model switching behavior
+
+## Pipeline Orchestration
+
+This PR adds a **single local pipeline entrypoint** that stitches together the end-to-end workflow using the new programmatic `run(...)` APIs (instead of calling CLI scripts).
+
+### What it does
+
+Running the pipeline will execute, in order:
+
+1. **poll** , fetch raw market bars
+2. **features** , build deterministic features + manifest
+3. **regimes** , label regimes using rule-based logic
+4. **predict** , run batch inference (active + shadow predictions)
+5. **eval** , generate scorecards from predictions
+6. **switch** , select / switch the active model from evaluation results
+
+### Run it
+
+```bash
+python -m src.pipeline.run -v
+```
