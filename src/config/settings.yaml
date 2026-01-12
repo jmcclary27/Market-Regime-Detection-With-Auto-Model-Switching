@@ -7,6 +7,7 @@ data:
   raw_path: data/raw
   processed_path: data/processed
   features_path: data/features
+  regimes_path: data/regimes
 
 logging:
   level: INFO

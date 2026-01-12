@@ -1,45 +1,68 @@
-# src/regimes/run_regime_detection.py
 from __future__ import annotations
 
-from datetime import datetime
+import argparse
 from pathlib import Path
+from typing import Optional
 
 import pandas as pd
 
+from src.config.load_config import load_config
 from src.regimes.rules import label_regimes
 
 
-def utc_timestamp_for_filename() -> str:
-    # e.g. 20260103T192530Z
-    return datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+def run(
+    *,
+    input_path: Path,
+    timestamp: str,
+    config_path: Path = Path("src/config/settings.yaml"),
+) -> Path:
+    """
+    Programmatic entrypoint for orchestration (PR 9).
 
+    Reads:
+      - features parquet at input_path
 
-def main() -> None:
-    input_path = Path("data/features/test-run.parquet")
-    output_dir = Path("data/regimes")
-    output_dir.mkdir(parents=True, exist_ok=True)
+    Writes:
+      - <regimes_dir>/<timestamp>.parquet
+
+    Output dataframe includes original features plus:
+      - regime
+      - regime_explanation
+
+    Returns:
+      - regimes parquet path
+    """
+    cfg = load_config(str(config_path))
+
+    data_cfg = cfg.get("data", {})
+    regimes_dir = Path(data_cfg.get("regimes_path", "data/regimes"))
+    regimes_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_parquet(input_path)
 
-    regimes = label_regimes(df)
+    labels = label_regimes(df)
+    out = df.join(labels)
 
-    # Keep key identifiers for joining/debugging
-    out = pd.concat(
-        [
-            df[["timestamp", "symbol"]].reset_index(drop=True),
-            regimes.reset_index(drop=True),
-        ],
-        axis=1,
+    regimes_path = regimes_dir / f"{timestamp}.parquet"
+    out.to_parquet(regimes_path, index=False)
+
+    print(f"Wrote: {regimes_path}")
+    return regimes_path
+
+
+def main(argv: Optional[list[str]] = None) -> None:
+    p = argparse.ArgumentParser(description="Run rule-based regime detection and write parquet.")
+    p.add_argument("--input", required=True, help="Path to features parquet (.parquet)")
+    p.add_argument("--timestamp", required=True, help="Timestamp slug, e.g. 20260112_150402Z")
+    p.add_argument("--config", default="src/config/settings.yaml", help="Path to settings yaml")
+    args = p.parse_args(argv)
+
+    run(
+        input_path=Path(args.input),
+        timestamp=args.timestamp,
+        config_path=Path(args.config),
     )
 
-    out_path = output_dir / f"regimes_{utc_timestamp_for_filename()}.parquet"
-    out.to_parquet(out_path, index=False)
-
-    print(f"Wrote regimes to: {out_path}")
-    print(out.head(10))
-
-def run() -> None:
-    main()
 
 if __name__ == "__main__":
     main()

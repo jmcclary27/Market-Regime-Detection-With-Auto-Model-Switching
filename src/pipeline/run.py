@@ -36,8 +36,11 @@ def step(name: str, fn: Callable[[], None]) -> None:
     try:
         fn()
     except SystemExit as e:
-        # A lot of "python -m ..." style scripts call sys.exit()
-        LOG.exception("SystemExit raised in step, %s (code=%s)", name, getattr(e, "code", None))
+        LOG.exception(
+            "SystemExit raised in step, %s (code=%s)",
+            name,
+            getattr(e, "code", None),
+        )
         raise
     except Exception:
         LOG.exception("Step failed, %s", name)
@@ -49,9 +52,7 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     default_root = Path(__file__).resolve().parents[2]
     project_root = Path(os.environ.get("PROJECT_ROOT", str(default_root))).resolve()
 
-    data_dir = Path(
-        os.environ.get("DATA_DIR", str(project_root / "data"))
-    ).resolve()
+    data_dir = Path(os.environ.get("DATA_DIR", str(project_root / "data"))).resolve()
 
     run_ts = args.run_ts or os.environ.get("RUN_TS") or utc_timestamp()
 
@@ -62,40 +63,84 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     )
 
 
+def latest_raw_file(raw_dir: Path) -> Path:
+    candidates = sorted(
+        raw_dir.glob("*.csv"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not candidates:
+        raise FileNotFoundError(f"No raw CSV files found in {raw_dir}")
+    return candidates[0]
+
+
 def run_pipeline(cfg: PipelineConfig) -> None:
     LOG.info("Pipeline run started, run_ts=%s", cfg.run_ts)
-    LOG.info("All entrypoints imported, starting steps...")
 
-    # ---- PR 1: ingestion ----
+    # ---- imports (cheap + explicit) ----
     from src.ingestion.run_ingestion import run as ingest_run
-
-    # ---- PR 2: features ----
     from src.features.run_features import run as features_run
-
-    # ---- PR 3: regimes ----
     from src.regimes.run_regime_detection import run as regimes_run
 
-    # ---- PR 5: inference ----
-    from src.inference.batch_predict import run as predict_run
+    # IMPORTANT: use orchestration-friendly wrapper we added
+    from src.inference.batch_predict import run_stage as predict_run
 
-    # ---- PR 6: evaluation ----
     from src.eval.run_evaluator import run as eval_run
-
-    # ---- PR 8: switching ----
     from src.deploy.switcher import run as switch_run
-    
+
     LOG.info("All entrypoints imported, starting steps...")
 
-    LOG.info("DEBUG: about to call step('poll', ingest_run)")
-
+    # ---- poll ----
     step("poll", ingest_run)
-    step("features", features_run)
-    step("regimes", regimes_run)
-    step("predict", predict_run)
+
+    # ---- features ----
+    features_parquet: Path | None = None
+
+    def _features() -> None:
+        nonlocal features_parquet
+        raw_latest = latest_raw_file(cfg.data_dir / "raw")
+        LOG.info("Using raw input: %s", raw_latest)
+        features_parquet, _ = features_run(input_path=raw_latest, timestamp=cfg.run_ts)
+
+    step("features", _features)
+
+    # ---- regimes ----
+    regimes_parquet: Path | None = None
+
+    def _regimes() -> None:
+        nonlocal regimes_parquet
+        if features_parquet is None:
+            raise RuntimeError("features_parquet not set")
+        regimes_parquet = regimes_run(input_path=features_parquet, timestamp=cfg.run_ts)
+
+    step("regimes", _regimes)
+
+    # ---- predict ----
+    predictions_parquet: Path | None = None
+
+    def _predict() -> None:
+        nonlocal predictions_parquet
+        if features_parquet is None:
+            raise RuntimeError("features_parquet not set")
+        # batch_predict currently scores from features parquet
+        predictions_parquet = predict_run(features_path=features_parquet)
+
+    step("predict", _predict)
+
+    # ---- eval ----
+    # (likely next to refactor to accept predictions_parquet + timestamp)
     step("eval", eval_run)
+
+    # ---- switch ----
     step("switch", switch_run)
 
-    LOG.info("Pipeline run completed, run_ts=%s", cfg.run_ts)
+    LOG.info(
+        "Pipeline run completed, run_ts=%s (features=%s, regimes=%s, predictions=%s)",
+        cfg.run_ts,
+        str(features_parquet) if features_parquet else None,
+        str(regimes_parquet) if regimes_parquet else None,
+        str(predictions_parquet) if predictions_parquet else None,
+    )
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -125,6 +170,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     except BaseException:
         LOG.exception("Pipeline crashed")
         raise
+
+    return 0
 
 
 if __name__ == "__main__":
