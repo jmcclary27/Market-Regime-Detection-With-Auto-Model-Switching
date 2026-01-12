@@ -52,6 +52,8 @@ def main() -> None:
     print(f"Wrote: {manifest_path}")
     print(f"SHA256: {manifest.content_sha256}")
 
+def run() -> None:
+    main()
 
 if __name__ == "__main__":
     main()

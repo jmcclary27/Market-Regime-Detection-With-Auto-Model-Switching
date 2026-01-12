@@ -5,9 +5,11 @@ def main() -> None:
     cfg = load_config()
     symbols = cfg["market"]["symbols"]
 
-    # stub behavior, just proves wiring works
     for sym in symbols:
         fetch_market_data(sym, "2020-01-01", "2020-12-31")
+
+def run() -> None:
+    main()
 
 if __name__ == "__main__":
     main()

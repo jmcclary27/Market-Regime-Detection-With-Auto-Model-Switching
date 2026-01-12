@@ -38,6 +38,8 @@ def main() -> None:
     print(f"Wrote regimes to: {out_path}")
     print(out.head(10))
 
+def run() -> None:
+    main()
 
 if __name__ == "__main__":
     main()

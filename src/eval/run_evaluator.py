@@ -15,6 +15,8 @@ from src.eval.metrics import (
     write_scorecard_artifacts,
 )
 
+def run() -> None:
+    main()
 
 def main() -> None:
     ap = argparse.ArgumentParser()
