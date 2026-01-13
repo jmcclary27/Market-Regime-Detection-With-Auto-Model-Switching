@@ -12,10 +12,12 @@ def test_batch_predict_produces_predictions(tmp_path: Path) -> None:
     # ---- features ----
     features_dir = tmp_path / "data" / "features"
     features_dir.mkdir(parents=True)
-    df = pd.DataFrame({
-        "f1": [1.0, 2.0, 3.0],
-        "f2": [0.5, 0.2, 0.1],
-    })
+    df = pd.DataFrame(
+        {
+            "f1": [1.0, 2.0, 3.0],
+            "f2": [0.5, 0.2, 0.1],
+        }
+    )
     features_path = features_dir / "latest.parquet"
     df.to_parquet(features_path)
 

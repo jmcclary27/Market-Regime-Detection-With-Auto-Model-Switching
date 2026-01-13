@@ -7,7 +7,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import joblib
 import pandas as pd
@@ -22,7 +22,7 @@ class BatchPredictConfig:
     output_dir: Path = Path("data/predictions")
     runs_dir: Path = Path("data/runs")
     target_col: str = "target"
-    active_file: Optional[Path] = None
+    active_file: Path | None = None
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
@@ -32,8 +32,8 @@ def _latest_timestamp_dir(parent: Path) -> Path:
     return max(candidates, key=lambda p: int(p.name))
 
 
-def discover_models(models_dir: Path) -> List[Dict[str, str]]:
-    models: List[Dict[str, str]] = []
+def discover_models(models_dir: Path) -> list[dict[str, str]]:
+    models: list[dict[str, str]] = []
 
     # baseline: models/baseline/<ts>/model.joblib
     baseline_root = models_dir / "baseline"
@@ -138,15 +138,15 @@ def _align_X_for_model(model: Any, X: pd.DataFrame) -> pd.DataFrame:
     return X
 
 
-def _make_numeric_X(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str]]:
+def _make_numeric_X(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
     Convert datetime columns to int64 nanoseconds.
     Drop any remaining non-numeric columns (object/string).
     Return: (X_numeric, converted_cols, dropped_cols)
     """
     X = df.copy()
-    converted: List[str] = []
-    dropped: List[str] = []
+    converted: list[str] = []
+    dropped: list[str] = []
 
     # Convert datetime64 columns to int64
     for col in list(X.columns):
@@ -212,7 +212,7 @@ def _drop_nan_rows(X: pd.DataFrame, row_ids: pd.Index) -> tuple[pd.DataFrame, pd
     return X_clean, row_ids_clean
 
 
-def _spec_to_registry_key(spec: Dict[str, str]) -> str:
+def _spec_to_registry_key(spec: dict[str, str]) -> str:
     """
     Provide a stable identifier for a discovered model spec, used to mark is_active
     even when the active model is discovered via "latest.joblib" but points to a
@@ -254,14 +254,16 @@ def run(config: BatchPredictConfig) -> Path:
 
     # Load active model via registry (opt-in)
     active_load_error: str | None = None
-    active_ref_dict: Dict[str, Any] | None = None
+    active_ref_dict: dict[str, Any] | None = None
     active_artifact_path: str | None = None
     active_model = None
     active_meta = None
 
     if config.active_file is not None and config.active_file.exists():
         try:
-            active_model_obj, active_meta, active_ref = load_active_model(active_file=config.active_file)
+            active_model_obj, active_meta, active_ref = load_active_model(
+                active_file=config.active_file
+            )
             active_model = _unwrap_model(active_model_obj)
             active_ref_dict = {
                 "model_type": active_ref.model_type,
@@ -269,15 +271,17 @@ def run(config: BatchPredictConfig) -> Path:
                 "model_id": active_ref.model_id,
                 "version": active_ref.version,
                 "artifact_path": active_ref.artifact_path.as_posix(),
-                "metadata_path": active_ref.metadata_path.as_posix() if active_ref.metadata_path else None,
+                "metadata_path": active_ref.metadata_path.as_posix()
+                if active_ref.metadata_path
+                else None,
                 "updated_at": active_ref.updated_at,
             }
             active_artifact_path = active_ref.artifact_path.as_posix()
         except RegistryError as e:
             active_load_error = repr(e)
 
-    rows: List[Dict[str, Any]] = []
-    failed: List[Dict[str, str]] = []
+    rows: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
 
     # 1) Run active model first (if available) and label it explicitly
     if active_model is not None and active_artifact_path is not None:
@@ -286,11 +290,13 @@ def run(config: BatchPredictConfig) -> Path:
             X_clean, row_ids_clean = _drop_nan_rows(X_aligned, row_ids)
 
             if len(X_clean) == 0:
-                raise RuntimeError("After dropping NaNs, no rows remain for active model inference.")
+                raise RuntimeError(
+                    "After dropping NaNs, no rows remain for active model inference."
+                )
 
             preds = active_model.predict(X_clean)
 
-            for rid, pred in zip(row_ids_clean, preds):
+            for rid, pred in zip(row_ids_clean, preds, strict=False):
                 rows.append(
                     {
                         "row_id": int(rid),
@@ -335,7 +341,7 @@ def run(config: BatchPredictConfig) -> Path:
 
             preds = model.predict(X_clean)
 
-            for rid, pred in zip(row_ids_clean, preds):
+            for rid, pred in zip(row_ids_clean, preds, strict=False):
                 rows.append(
                     {
                         "row_id": int(rid),
@@ -346,9 +352,13 @@ def run(config: BatchPredictConfig) -> Path:
                         "features_path": str(config.features_path),
                         "model_path": str(model_path),
                         "is_active": False,
-                        "active_model_type": active_ref_dict["model_type"] if active_ref_dict else None,
+                        "active_model_type": active_ref_dict["model_type"]
+                        if active_ref_dict
+                        else None,
                         "active_model_id": active_ref_dict["model_id"] if active_ref_dict else None,
-                        "active_model_version": active_ref_dict["version"] if active_ref_dict else None,
+                        "active_model_version": active_ref_dict["version"]
+                        if active_ref_dict
+                        else None,
                         "active_regime": active_ref_dict["regime"] if active_ref_dict else None,
                     }
                 )
@@ -384,7 +394,7 @@ def run(config: BatchPredictConfig) -> Path:
     shutil.copyfile(output_path, latest_path)
 
     config.runs_dir.mkdir(parents=True, exist_ok=True)
-    run_meta: Dict[str, Any] = {
+    run_meta: dict[str, Any] = {
         "rows_with_nan_or_inf": nan_rows,
         "run_type": "batch_inference",
         "timestamp": ts,
@@ -393,7 +403,9 @@ def run(config: BatchPredictConfig) -> Path:
         "output_path": str(output_path),
         "latest_path": str(latest_path),
         "num_prediction_rows": int(len(out_df)),
-        "num_models_succeeded": int(out_df[["model_source", "model_name"]].drop_duplicates().shape[0]),
+        "num_models_succeeded": int(
+            out_df[["model_source", "model_name"]].drop_duplicates().shape[0]
+        ),
         "failed_models": failed,
         "feature_preprocessing": {
             "converted_datetime_cols": converted_cols,

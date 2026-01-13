@@ -3,11 +3,10 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable, Optional
-
 
 LOG = logging.getLogger("pipeline")
 
@@ -20,7 +19,7 @@ class PipelineConfig:
 
 
 def utc_timestamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%d_%H%M%SZ")
 
 
 def setup_logging(verbosity: int) -> None:
@@ -78,15 +77,14 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     LOG.info("Pipeline run started, run_ts=%s", cfg.run_ts)
 
     # ---- imports (cheap + explicit) ----
-    from src.ingestion.run_ingestion import run as ingest_run
+    from src.deploy.switcher import run as switch_run
+    from src.eval.run_evaluator import run as eval_run
     from src.features.run_features import run as features_run
-    from src.regimes.run_regime_detection import run as regimes_run
 
     # IMPORTANT: use orchestration-friendly wrapper we added
     from src.inference.batch_predict import run_stage as predict_run
-
-    from src.eval.run_evaluator import run as eval_run
-    from src.deploy.switcher import run as switch_run
+    from src.ingestion.run_ingestion import run as ingest_run
+    from src.regimes.run_regime_detection import run as regimes_run
 
     LOG.info("All entrypoints imported, starting steps...")
 
@@ -143,7 +141,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     )
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run full local pipeline")
     p.add_argument(
         "--run-ts",
@@ -160,7 +158,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     setup_logging(args.verbose)
     cfg = build_config(args)

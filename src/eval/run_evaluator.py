@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from pathlib import Path
 import argparse
+from pathlib import Path
 
 import pandas as pd
 
@@ -10,13 +10,14 @@ from src.eval.metrics import (
     build_eval_frame,
     build_scorecard,
     compute_metrics_table,
-    load_latest_parquet,
     make_timestamp_id,
     write_scorecard_artifacts,
 )
 
+
 def run() -> None:
     main()
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()

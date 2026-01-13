@@ -1,5 +1,7 @@
 from pathlib import Path
+
 import yaml
+
 
 def load_config(path: str | Path = "src/config/settings.yaml") -> dict:
     path = Path(path)

@@ -1,12 +1,16 @@
-# Language
-pthon=3.11.4
-
 # Machine Learning
 mlflow
 pandas
 pyarrow
 pyyaml
 scikit-learn
+types-PyYAML
 
 # Market Dependencies
 yfinance
+
+# CI / Dev Tooling
+pytest
+ruff==0.9.0
+mypy==1.14.1
+pre-commit==4.0.1

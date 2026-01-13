@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Optional, Tuple
 
 import pandas as pd
 
@@ -57,7 +56,7 @@ def run(
     input_path: Path,
     timestamp: str,
     config_path: Path = Path("src/config/settings.yaml"),
-) -> Tuple[Path, Path]:
+) -> tuple[Path, Path]:
     """
     Programmatic entrypoint for orchestration (PR 9).
 
@@ -102,7 +101,7 @@ def run(
     return parquet_path, manifest_path
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(
         description="Build deterministic features and write parquet + manifest."
     )

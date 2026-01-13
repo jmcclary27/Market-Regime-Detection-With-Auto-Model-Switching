@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -21,7 +20,7 @@ def _require_columns(df: pd.DataFrame, cols: list[str]) -> None:
         raise ValueError(f"Missing required columns: {missing}")
 
 
-def build_features(bars: pd.DataFrame, config: Optional[FeatureBuildConfig] = None) -> pd.DataFrame:
+def build_features(bars: pd.DataFrame, config: FeatureBuildConfig | None = None) -> pd.DataFrame:
     """
     Deterministic feature builder v0.
 
@@ -53,10 +52,7 @@ def build_features(bars: pd.DataFrame, config: Optional[FeatureBuildConfig] = No
     df["log_return_1"] = np.log(df[cfg.close_col] / prev_close)
 
     df["sma_10"] = (
-        g[cfg.close_col]
-        .rolling(window=10, min_periods=10)
-        .mean()
-        .reset_index(level=0, drop=True)
+        g[cfg.close_col].rolling(window=10, min_periods=10).mean().reset_index(level=0, drop=True)
     )
 
     # Fixed output order

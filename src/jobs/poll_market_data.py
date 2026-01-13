@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from src.config.load_config import load_config
@@ -23,7 +23,7 @@ class PollRunRecord:
 
 def _utc_ts() -> str:
     # File-system friendly timestamp
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
 def main() -> None:
@@ -40,7 +40,7 @@ def main() -> None:
     runs_dir = Path("runs")
     runs_dir.mkdir(parents=True, exist_ok=True)
 
-    started = datetime.now(timezone.utc)
+    started = datetime.now(UTC)
 
     df = fetch_market_data(symbol, start_date, end_date)
 
@@ -51,7 +51,7 @@ def main() -> None:
     latest_file = raw_dir / f"{symbol}_latest.csv"
     df.to_csv(latest_file, index=True)
 
-    finished = datetime.now(timezone.utc)
+    finished = datetime.now(UTC)
 
     record = PollRunRecord(
         started_at_utc=started.isoformat(),

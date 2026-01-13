@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Iterable
-
 import json
 import math
 import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -106,13 +105,11 @@ def build_eval_frame(
 
     if cfg.target_col not in feat.columns:
         raise ValueError(
-            f"Features missing target_col={cfg.target_col}. "
-            f"Available: {list(feat.columns)}"
+            f"Features missing target_col={cfg.target_col}. Available: {list(feat.columns)}"
         )
     if cfg.regime_col not in reg.columns:
         raise ValueError(
-            f"Regimes missing regime_col={cfg.regime_col}. "
-            f"Available: {list(reg.columns)}"
+            f"Regimes missing regime_col={cfg.regime_col}. Available: {list(reg.columns)}"
         )
 
     base = predictions[["row_id", cfg.model_col, cfg.pred_col]].copy()
@@ -217,9 +214,7 @@ def build_scorecard(
     regime_tbl = metrics_tbl[metrics_tbl["scope"] == "regime"].copy()
     for regime_val in sorted(regime_tbl["regime"].dropna().unique().tolist()):
         reg_slice = regime_tbl[regime_tbl["regime"] == regime_val]
-        n_regime = int(
-            eval_df.loc[eval_df[cfg.regime_col] == regime_val, "y_true"].notna().sum()
-        )
+        n_regime = int(eval_df.loc[eval_df[cfg.regime_col] == regime_val, "y_true"].notna().sum())
 
         by_model: dict[str, dict[str, float]] = {}
         for _, r in reg_slice.iterrows():

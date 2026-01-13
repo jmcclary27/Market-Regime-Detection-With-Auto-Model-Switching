@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import json
 import shutil
 import time
+from dataclasses import dataclass
+from pathlib import Path
 
+import joblib
+import mlflow
 import numpy as np
 import pandas as pd
-import mlflow
-import joblib
-
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
@@ -124,7 +123,9 @@ def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def evaluate_model(model, feature_cols: list[str], df: pd.DataFrame, target_col: str) -> dict[str, float]:
+def evaluate_model(
+    model, feature_cols: list[str], df: pd.DataFrame, target_col: str
+) -> dict[str, float]:
     X = df[feature_cols].to_numpy()
     y = df[target_col].to_numpy()
     pred = model.predict(X)
@@ -183,12 +184,22 @@ def run(cfg: TrainConfig) -> str:
         "target_col": cfg.target_col,
         "timestamp_col": cfg.timestamp_col,
         "return_col": cfg.return_col,
-        "regime_value_counts": df["regime"].value_counts().to_dict() if "regime" in df.columns else None,
+        "regime_value_counts": df["regime"].value_counts().to_dict()
+        if "regime" in df.columns
+        else None,
     }
 
     train_df, val_df, test_df = time_split(df, cfg.timestamp_col, cfg.train_frac, cfg.val_frac)
 
-    exclude = {cfg.target_col, cfg.timestamp_col, "regime_explanation", "regime", "symbol", "symbol_x", "symbol_y"}
+    exclude = {
+        cfg.target_col,
+        cfg.timestamp_col,
+        "regime_explanation",
+        "regime",
+        "symbol",
+        "symbol_x",
+        "symbol_y",
+    }
     baseline_feature_cols = select_feature_columns(df, exclude)
     if not baseline_feature_cols:
         raise ValueError(
@@ -242,11 +253,27 @@ def run(cfg: TrainConfig) -> str:
     expert_val = evaluate_model(expert_model, expert_feature_cols, val_df, cfg.target_col)
     expert_test = evaluate_model(expert_model, expert_feature_cols, test_df, cfg.target_col)
 
-    val_reg_df = val_df[val_df["regime"] == expert_regime].copy() if "regime" in val_df.columns else val_df.iloc[0:0]
-    test_reg_df = test_df[test_df["regime"] == expert_regime].copy() if "regime" in test_df.columns else test_df.iloc[0:0]
+    val_reg_df = (
+        val_df[val_df["regime"] == expert_regime].copy()
+        if "regime" in val_df.columns
+        else val_df.iloc[0:0]
+    )
+    test_reg_df = (
+        test_df[test_df["regime"] == expert_regime].copy()
+        if "regime" in test_df.columns
+        else test_df.iloc[0:0]
+    )
 
-    expert_val_reg = evaluate_model(expert_model, expert_feature_cols, val_reg_df, cfg.target_col) if len(val_reg_df) else None
-    expert_test_reg = evaluate_model(expert_model, expert_feature_cols, test_reg_df, cfg.target_col) if len(test_reg_df) else None
+    expert_val_reg = (
+        evaluate_model(expert_model, expert_feature_cols, val_reg_df, cfg.target_col)
+        if len(val_reg_df)
+        else None
+    )
+    expert_test_reg = (
+        evaluate_model(expert_model, expert_feature_cols, test_reg_df, cfg.target_col)
+        if len(test_reg_df)
+        else None
+    )
 
     run_meta_path = cfg.out_dir / f"run_pr4_dataset_{run_ts}.json"
     run_meta_path.write_text(json.dumps(summary, indent=2))
