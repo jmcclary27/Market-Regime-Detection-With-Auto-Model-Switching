@@ -5,6 +5,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import joblib
 import mlflow
@@ -98,7 +99,9 @@ def build_training_frame(cfg: TrainConfig) -> pd.DataFrame:
     return df
 
 
-def time_split(df: pd.DataFrame, timestamp_col: str, train_frac: float, val_frac: float):
+def time_split(
+    df: pd.DataFrame, timestamp_col: str, train_frac: float, val_frac: float
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     df = df.sort_values(timestamp_col).reset_index(drop=True)
     n = len(df)
     n_train = int(n * train_frac)
@@ -123,9 +126,7 @@ def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def evaluate_model(
-    model, feature_cols: list[str], df: pd.DataFrame, target_col: str
-) -> dict[str, float]:
+def evaluate_model(model: Any, feature_cols: list[str], df: pd.DataFrame, target_col: str) -> dict[str, float]:
     X = df[feature_cols].to_numpy()
     y = df[target_col].to_numpy()
     pred = model.predict(X)
@@ -140,7 +141,7 @@ def register_expert_artifact(
     regime: str,
     run_ts: int,
     src_model_path: Path,
-    metadata: dict,
+    metadata: dict[str, Any],
 ) -> tuple[Path, Path]:
     """
     Copies the pretrained expert into a versioned folder and updates latest pointers.
@@ -153,7 +154,7 @@ def register_expert_artifact(
     versioned_meta_path = dest_dir / "metadata.json"
 
     shutil.copy2(src_model_path, versioned_model_path)
-    versioned_meta_path.write_text(json.dumps(metadata, indent=2))
+    versioned_meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
     latest_model_path = experts_root / regime / "latest.joblib"
     latest_meta_path = experts_root / regime / "latest.json"
@@ -175,7 +176,7 @@ def run(cfg: TrainConfig) -> str:
     run_ts = int(time.time())
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
 
-    summary = {
+    summary: dict[str, Any] = {
         "rows": int(df.shape[0]),
         "cols": int(df.shape[1]),
         "columns": list(df.columns),
@@ -184,9 +185,7 @@ def run(cfg: TrainConfig) -> str:
         "target_col": cfg.target_col,
         "timestamp_col": cfg.timestamp_col,
         "return_col": cfg.return_col,
-        "regime_value_counts": df["regime"].value_counts().to_dict()
-        if "regime" in df.columns
-        else None,
+        "regime_value_counts": df["regime"].value_counts().to_dict() if "regime" in df.columns else None,
     }
 
     train_df, val_df, test_df = time_split(df, cfg.timestamp_col, cfg.train_frac, cfg.val_frac)
@@ -237,9 +236,13 @@ def run(cfg: TrainConfig) -> str:
             "Run: python tools/make_pretrained_expert.py"
         )
 
-    expert_bundle = joblib.load(cfg.pretrained_expert_path)
+    expert_bundle_any = joblib.load(cfg.pretrained_expert_path)
+    expert_bundle = cast(dict[str, Any], expert_bundle_any)
+
     expert_model = expert_bundle["model"]
-    expert_feature_cols = expert_bundle["feature_cols"]
+    expert_feature_cols_any = expert_bundle["feature_cols"]
+    expert_feature_cols = cast(list[str], expert_feature_cols_any)
+
     expert_regime = str(expert_bundle.get("regime", "unknown"))
     expert_name = str(expert_bundle.get("model_name", cfg.pretrained_expert_path.stem))
 
@@ -253,30 +256,18 @@ def run(cfg: TrainConfig) -> str:
     expert_val = evaluate_model(expert_model, expert_feature_cols, val_df, cfg.target_col)
     expert_test = evaluate_model(expert_model, expert_feature_cols, test_df, cfg.target_col)
 
-    val_reg_df = (
-        val_df[val_df["regime"] == expert_regime].copy()
-        if "regime" in val_df.columns
-        else val_df.iloc[0:0]
-    )
+    val_reg_df = val_df[val_df["regime"] == expert_regime].copy() if "regime" in val_df.columns else val_df.iloc[0:0]
     test_reg_df = (
-        test_df[test_df["regime"] == expert_regime].copy()
-        if "regime" in test_df.columns
-        else test_df.iloc[0:0]
+        test_df[test_df["regime"] == expert_regime].copy() if "regime" in test_df.columns else test_df.iloc[0:0]
     )
 
-    expert_val_reg = (
-        evaluate_model(expert_model, expert_feature_cols, val_reg_df, cfg.target_col)
-        if len(val_reg_df)
-        else None
-    )
+    expert_val_reg = evaluate_model(expert_model, expert_feature_cols, val_reg_df, cfg.target_col) if len(val_reg_df) else None
     expert_test_reg = (
-        evaluate_model(expert_model, expert_feature_cols, test_reg_df, cfg.target_col)
-        if len(test_reg_df)
-        else None
+        evaluate_model(expert_model, expert_feature_cols, test_reg_df, cfg.target_col) if len(test_reg_df) else None
     )
 
     run_meta_path = cfg.out_dir / f"run_pr4_dataset_{run_ts}.json"
-    run_meta_path.write_text(json.dumps(summary, indent=2))
+    run_meta_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     split_summary_path = cfg.out_dir / f"split_summary_{run_ts}.json"
     split_summary_path.write_text(
@@ -294,10 +285,11 @@ def run(cfg: TrainConfig) -> str:
                 "n_test_expert_regime": int(len(test_reg_df)),
             },
             indent=2,
-        )
+        ),
+        encoding="utf-8",
     )
 
-    with mlflow.start_run(run_name=f"pr4_baseline_plus_expert_{run_ts}") as run:
+    with mlflow.start_run(run_name=f"pr4_baseline_plus_expert_{run_ts}") as active_run:
         # Params
         mlflow.log_param("features_path", str(cfg.features_path))
         mlflow.log_param("regimes_path", str(cfg.regimes_path))
@@ -324,8 +316,8 @@ def run(cfg: TrainConfig) -> str:
         mlflow.log_param("expert_artifact_path", str(cfg.pretrained_expert_path))
 
         # Dataset metrics
-        mlflow.log_metric("n_rows", int(summary["rows"]))
-        mlflow.log_metric("n_cols", int(summary["cols"]))
+        mlflow.log_metric("n_rows", float(summary["rows"]))
+        mlflow.log_metric("n_cols", float(summary["cols"]))
 
         # Baseline metrics
         mlflow.log_metric("baseline_val_mae", baseline_val["mae"])
@@ -347,11 +339,11 @@ def run(cfg: TrainConfig) -> str:
             mlflow.log_metric("expert_test_regime_rmse", expert_test_reg["rmse"])
 
         # Register expert artifact + latest pointers
-        expert_metadata = {
+        expert_metadata: dict[str, Any] = {
             "model_name": expert_name,
             "regime": expert_regime,
             "source_path": str(cfg.pretrained_expert_path),
-            "mlflow_run_id": run.info.run_id,
+            "mlflow_run_id": str(active_run.info.run_id),
             "created_at_unix": run_ts,
             "feature_cols": expert_feature_cols,
             "metrics": {
@@ -377,7 +369,7 @@ def run(cfg: TrainConfig) -> str:
         mlflow.log_artifact(str(versioned_expert_path))
         mlflow.log_artifact(str(latest_expert_path))
 
-        return run.info.run_id
+        return str(active_run.info.run_id)
 
 
 def main() -> None:
