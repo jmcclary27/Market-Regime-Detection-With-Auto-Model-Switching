@@ -29,6 +29,7 @@ def test_train_produces_artifacts(tmp_path: Path) -> None:
     # Build a simple, deterministic-ish price series
     close = pd.Series(range(n), dtype="float64") + 100.0
     import numpy as np
+
     log_return_1 = np.log(close / close.shift(1)).fillna(0.0)
     # Rolling mean, fill early NaNs
     sma_10 = close.rolling(10).mean().bfill()
