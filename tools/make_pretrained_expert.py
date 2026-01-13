@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+
 import joblib
 import pandas as pd
 from sklearn.linear_model import Ridge
@@ -30,8 +31,20 @@ def main() -> None:
     if len(expert_df) < 50:
         raise ValueError(f"Not enough rows for bullish expert, got {len(expert_df)}")
 
-    exclude = {TARGET_COL, TIMESTAMP_COL, "regime_explanation", "regime", "symbol", "symbol_x", "symbol_y"}
-    feature_cols = [c for c in expert_df.columns if c not in exclude and pd.api.types.is_numeric_dtype(expert_df[c])]
+    exclude = {
+        TARGET_COL,
+        TIMESTAMP_COL,
+        "regime_explanation",
+        "regime",
+        "symbol",
+        "symbol_x",
+        "symbol_y",
+    }
+    feature_cols = [
+        c
+        for c in expert_df.columns
+        if c not in exclude and pd.api.types.is_numeric_dtype(expert_df[c])
+    ]
     if not feature_cols:
         raise ValueError("No numeric feature columns for expert")
 

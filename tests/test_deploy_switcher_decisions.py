@@ -25,9 +25,13 @@ def test_switcher_promotes_and_updates_registry(tmp_path: Path) -> None:
     (data_dir / "scorecards").mkdir(parents=True)
     (tmp_path / "registry").mkdir(parents=True)
 
-    _write_scorecard(data_dir / "scorecards" / "latest.parquet", baseline_rmse=1.0, candidate_rmse=0.8)
+    _write_scorecard(
+        data_dir / "scorecards" / "latest.parquet", baseline_rmse=1.0, candidate_rmse=0.8
+    )
 
-    config = SwitchConfig(metric_name="rmse", promote_margin=0.0, rollback_margin=0.0, update_registry_on_promote=True)
+    config = SwitchConfig(
+        metric_name="rmse", promote_margin=0.0, rollback_margin=0.0, update_registry_on_promote=True
+    )
 
     # Act
     run_switcher(
@@ -56,11 +60,20 @@ def test_switcher_holds_when_within_margins(tmp_path: Path) -> None:
     (data_dir / "scorecards").mkdir(parents=True)
     (tmp_path / "registry").mkdir(parents=True)
 
-    _write_scorecard(data_dir / "scorecards" / "latest.parquet", baseline_rmse=1.0, candidate_rmse=1.0)
+    _write_scorecard(
+        data_dir / "scorecards" / "latest.parquet", baseline_rmse=1.0, candidate_rmse=1.0
+    )
 
-    config = SwitchConfig(metric_name="rmse", promote_margin=0.1, rollback_margin=0.1, update_registry_on_promote=True)
+    config = SwitchConfig(
+        metric_name="rmse", promote_margin=0.1, rollback_margin=0.1, update_registry_on_promote=True
+    )
 
-    run_switcher(data_dir=data_dir, config=config, active_model_id="baseline", candidate_model_id="expert_bullish")
+    run_switcher(
+        data_dir=data_dir,
+        config=config,
+        active_model_id="baseline",
+        candidate_model_id="expert_bullish",
+    )
 
     events = pd.read_parquet(data_dir / "deployments" / "events.parquet")
     row = events.iloc[0]
@@ -74,11 +87,20 @@ def test_switcher_rolls_back_when_candidate_worse(tmp_path: Path) -> None:
     (data_dir / "scorecards").mkdir(parents=True)
     (tmp_path / "registry").mkdir(parents=True)
 
-    _write_scorecard(data_dir / "scorecards" / "latest.parquet", baseline_rmse=1.0, candidate_rmse=1.3)
+    _write_scorecard(
+        data_dir / "scorecards" / "latest.parquet", baseline_rmse=1.0, candidate_rmse=1.3
+    )
 
-    config = SwitchConfig(metric_name="rmse", promote_margin=0.0, rollback_margin=0.1, update_registry_on_promote=True)
+    config = SwitchConfig(
+        metric_name="rmse", promote_margin=0.0, rollback_margin=0.1, update_registry_on_promote=True
+    )
 
-    run_switcher(data_dir=data_dir, config=config, active_model_id="baseline", candidate_model_id="expert_bullish")
+    run_switcher(
+        data_dir=data_dir,
+        config=config,
+        active_model_id="baseline",
+        candidate_model_id="expert_bullish",
+    )
 
     events = pd.read_parquet(data_dir / "deployments" / "events.parquet")
     row = events.iloc[0]

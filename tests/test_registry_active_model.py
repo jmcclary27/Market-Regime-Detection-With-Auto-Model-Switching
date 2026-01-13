@@ -7,7 +7,6 @@ import joblib
 import pytest
 
 from src.registry.registry import (
-    ACTIVE_FILE,
     ActiveModelRef,
     RegistryError,
     load_active_model,
@@ -77,7 +76,9 @@ def test_load_active_model_loads_joblib(tmp_path: Path) -> None:
     old_cwd = os.getcwd()
     os.chdir(repo_root)
     try:
-        model, metadata, loaded_ref = load_active_model(active_file=Path("registry/active_model.yaml"))
+        model, metadata, loaded_ref = load_active_model(
+            active_file=Path("registry/active_model.yaml")
+        )
     finally:
         os.chdir(old_cwd)
 

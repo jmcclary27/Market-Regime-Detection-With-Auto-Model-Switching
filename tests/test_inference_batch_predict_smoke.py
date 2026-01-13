@@ -44,6 +44,8 @@ def test_batch_predict_writes_predictions(tmp_path: Path) -> None:
     assert latest_path.exists()
 
     out_df = pd.read_parquet(latest_path)
-    assert set(["row_id", "model_name", "model_source", "y_pred", "inference_ts"]).issubset(out_df.columns)
+    assert set(["row_id", "model_name", "model_source", "y_pred", "inference_ts"]).issubset(
+        out_df.columns
+    )
     assert out_df["model_name"].nunique() >= 1
     assert len(out_df) == len(df)  # 1 model * 3 rows

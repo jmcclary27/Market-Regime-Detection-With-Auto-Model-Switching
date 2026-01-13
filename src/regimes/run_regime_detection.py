@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 
@@ -50,7 +49,7 @@ def run(
     return regimes_path
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description="Run rule-based regime detection and write parquet.")
     p.add_argument("--input", required=True, help="Path to features parquet (.parquet)")
     p.add_argument("--timestamp", required=True, help="Timestamp slug, e.g. 20260112_150402Z")

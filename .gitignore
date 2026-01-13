@@ -1,7 +1,72 @@
-data/raw/
-data/features/
-runs/
-*.parquet
-data/regimes/
-.pytest_cache
+############################
+# Python / tooling
+############################
 __pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+############################
+# Virtual environments
+############################
+.venv/
+venv/
+env/
+
+############################
+# OS / editor
+############################
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+############################
+# Pipeline artifacts (generated)
+############################
+
+# Raw ingestion outputs
+data/raw/
+
+# Feature pipeline outputs
+data/features/
+
+# Regime detection outputs
+data/regimes/
+
+# Batch inference outputs
+data/predictions/
+
+# Evaluation outputs
+data/scorecards/
+
+# Run metadata
+data/runs/
+
+# Deployment / switcher logs
+data/deployments/
+
+# Models (baseline, experts, pretrained copies)
+models/
+
+# Registry runtime state
+registry/active_model.yaml
+registry/*.bak
+
+############################
+# MLflow local tracking
+############################
+mlruns/
+mlflow.db
+mlflow.db-journal
+
+############################
+# Generic data formats (generated only)
+############################
+*.parquet
+
+############################
+# Temporary / scratch
+############################
+runs/

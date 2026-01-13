@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-import pandas as pd
 import joblib
+import pandas as pd
 from sklearn.linear_model import Ridge
 
 from src.models.train import TrainConfig, run

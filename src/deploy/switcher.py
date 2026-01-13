@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 
-
 # ---------- Config ----------
+
 
 @dataclass(frozen=True)
 class SwitchConfig:
@@ -19,6 +19,7 @@ class SwitchConfig:
       - Your scorecards use: "rmse", "mae"
       - Lower is better for both.
     """
+
     window_type: str = "count"
     window_value: int = 100
     metric_name: str = "rmse"
@@ -54,7 +55,8 @@ EVENT_COLUMNS = [
 
 # ---------- Helpers ----------
 
-def append_event(events_path: Path, event: Dict[str, Any]) -> None:
+
+def append_event(events_path: Path, event: dict[str, Any]) -> None:
     """
     Append a single event row to an append-only parquet log.
     Avoid pandas concat dtype warnings by enforcing schema.
@@ -90,7 +92,7 @@ def write_active_model_yaml(registry_path: Path, model_id: str) -> None:
     registry_path.write_text(f"model_id: {model_id}\n", encoding="utf-8")
 
 
-def infer_model_id_col(df: Optional[pd.DataFrame]) -> Optional[str]:
+def infer_model_id_col(df: pd.DataFrame | None) -> str | None:
     if df is None:
         return None
     candidates = ["model_name", "model_id", "model", "model_key", "id"]
@@ -100,7 +102,7 @@ def infer_model_id_col(df: Optional[pd.DataFrame]) -> Optional[str]:
     return None
 
 
-def load_latest_scorecard(scorecards_dir: Path) -> Optional[pd.DataFrame]:
+def load_latest_scorecard(scorecards_dir: Path) -> pd.DataFrame | None:
     path = scorecards_dir / "latest.parquet"
     if not path.exists():
         return None
@@ -121,7 +123,7 @@ def extract_metric(
     *,
     model_id: str,
     metric_name: str,
-) -> Optional[float]:
+) -> float | None:
     id_col = infer_model_id_col(df)
     if id_col is None:
         return None
@@ -140,7 +142,7 @@ def extract_metric(
     return float(val)
 
 
-def extract_n(df: pd.DataFrame, *, model_id: str) -> Optional[int]:
+def extract_n(df: pd.DataFrame, *, model_id: str) -> int | None:
     id_col = infer_model_id_col(df)
     if id_col is None or "n" not in df.columns:
         return None
@@ -163,7 +165,7 @@ def decide(
     candidate_metric: float,
     promote_margin: float,
     rollback_margin: float,
-) -> Tuple[str, str]:
+) -> tuple[str, str]:
     """
     Lower is better.
     Returns (decision, reason).
@@ -181,6 +183,7 @@ def decide(
 
 
 # ---------- Switcher ----------
+
 
 def run_switcher(
     *,
@@ -206,7 +209,7 @@ def run_switcher(
         append_event(
             events_path,
             {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
                 "candidate_model_id": candidate_model_id,
@@ -228,7 +231,7 @@ def run_switcher(
         append_event(
             events_path,
             {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
                 "candidate_model_id": candidate_model_id,
@@ -261,7 +264,7 @@ def run_switcher(
         append_event(
             events_path,
             {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
                 "candidate_model_id": candidate_model_id,
@@ -305,7 +308,7 @@ def run_switcher(
     append_event(
         events_path,
         {
-            "ts": datetime.now(timezone.utc).isoformat(),
+            "ts": datetime.now(UTC).isoformat(),
             "event_type": event_type,
             "active_model_id_before": active_model_id,
             "candidate_model_id": candidate_model_id,
@@ -325,7 +328,9 @@ def run_switcher(
 def run() -> None:
     main()
 
+
 # ---------- CLI ----------
+
 
 def main() -> None:
     config = SwitchConfig()

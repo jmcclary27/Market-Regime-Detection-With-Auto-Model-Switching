@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 
 from src.eval.metrics import EvalConfig, build_eval_frame, compute_metrics_table, mae, rmse

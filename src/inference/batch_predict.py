@@ -7,7 +7,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import joblib
 import pandas as pd
@@ -22,7 +22,7 @@ class BatchPredictConfig:
     output_dir: Path = Path("data/predictions")
     runs_dir: Path = Path("data/runs")
     target_col: str = "target"
-    active_file: Optional[Path] = None
+    active_file: Path | None = None
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
@@ -32,8 +32,8 @@ def _latest_timestamp_dir(parent: Path) -> Path:
     return max(candidates, key=lambda p: int(p.name))
 
 
-def discover_models(models_dir: Path) -> List[Dict[str, str]]:
-    models: List[Dict[str, str]] = []
+def discover_models(models_dir: Path) -> list[dict[str, str]]:
+    models: list[dict[str, str]] = []
 
     # baseline: models/baseline/<ts>/model.joblib
     baseline_root = models_dir / "baseline"
@@ -79,7 +79,8 @@ def discover_models(models_dir: Path) -> List[Dict[str, str]]:
 
     if not models:
         raise RuntimeError(
-            f"No models discovered. Looked under: {models_dir}/baseline, {models_dir}/experts, {models_dir}/pretrained"
+            "No models discovered. Looked under: "
+            f"{models_dir}/baseline, {models_dir}/experts, {models_dir}/pretrained"
         )
 
     # deterministic order
@@ -138,15 +139,15 @@ def _align_X_for_model(model: Any, X: pd.DataFrame) -> pd.DataFrame:
     return X
 
 
-def _make_numeric_X(df: pd.DataFrame) -> Tuple[pd.DataFrame, List[str], List[str]]:
+def _make_numeric_X(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str]]:
     """
     Convert datetime columns to int64 nanoseconds.
     Drop any remaining non-numeric columns (object/string).
     Return: (X_numeric, converted_cols, dropped_cols)
     """
     X = df.copy()
-    converted: List[str] = []
-    dropped: List[str] = []
+    converted: list[str] = []
+    dropped: list[str] = []
 
     # Convert datetime64 columns to int64
     for col in list(X.columns):
@@ -212,15 +213,6 @@ def _drop_nan_rows(X: pd.DataFrame, row_ids: pd.Index) -> tuple[pd.DataFrame, pd
     return X_clean, row_ids_clean
 
 
-def _spec_to_registry_key(spec: Dict[str, str]) -> str:
-    """
-    Provide a stable identifier for a discovered model spec, used to mark is_active
-    even when the active model is discovered via "latest.joblib" but points to a
-    specific timestamp path in the registry.
-    """
-    return f"{spec['model_source']}::{spec['model_name']}::{spec['model_path']}"
-
-
 def run(config: BatchPredictConfig) -> Path:
     ts = int(time.time())
 
@@ -238,7 +230,7 @@ def run(config: BatchPredictConfig) -> Path:
 
     row_ids = pd.Index(X_raw.index.astype(int))
 
-    # Make X numeric (fixes your Timestamp -> float crash)
+    # Make X numeric (handles Timestamp, bool, object)
     X, converted_cols, dropped_cols = _make_numeric_X(X_raw)
     nan_rows = int((~X.replace([float("inf"), float("-inf")], pd.NA).notna().all(axis=1)).sum())
 
@@ -254,7 +246,7 @@ def run(config: BatchPredictConfig) -> Path:
 
     # Load active model via registry (opt-in)
     active_load_error: str | None = None
-    active_ref_dict: Dict[str, Any] | None = None
+    active_ref_dict: dict[str, Any] | None = None
     active_artifact_path: str | None = None
     active_model = None
     active_meta = None
@@ -276,8 +268,21 @@ def run(config: BatchPredictConfig) -> Path:
         except RegistryError as e:
             active_load_error = repr(e)
 
-    rows: List[Dict[str, Any]] = []
-    failed: List[Dict[str, str]] = []
+    # Precompute active fields safely (mypy-friendly)
+    active_model_type: str | None = None
+    active_model_id: str | None = None
+    active_model_version: str | None = None
+    active_regime: str | None = None
+    if active_ref_dict is not None:
+        active_model_type = str(active_ref_dict.get("model_type")) if active_ref_dict.get("model_type") is not None else None
+        active_model_id = str(active_ref_dict.get("model_id")) if active_ref_dict.get("model_id") is not None else None
+        active_model_version = (
+            str(active_ref_dict.get("version")) if active_ref_dict.get("version") is not None else None
+        )
+        active_regime = str(active_ref_dict.get("regime")) if active_ref_dict.get("regime") is not None else None
+
+    rows: list[dict[str, Any]] = []
+    failed: list[dict[str, str]] = []
 
     # 1) Run active model first (if available) and label it explicitly
     if active_model is not None and active_artifact_path is not None:
@@ -290,7 +295,7 @@ def run(config: BatchPredictConfig) -> Path:
 
             preds = active_model.predict(X_clean)
 
-            for rid, pred in zip(row_ids_clean, preds):
+            for rid, pred in zip(row_ids_clean, preds, strict=False):
                 rows.append(
                     {
                         "row_id": int(rid),
@@ -301,10 +306,10 @@ def run(config: BatchPredictConfig) -> Path:
                         "features_path": str(config.features_path),
                         "model_path": active_artifact_path,
                         "is_active": True,
-                        "active_model_type": active_ref_dict["model_type"],
-                        "active_model_id": active_ref_dict["model_id"],
-                        "active_model_version": active_ref_dict["version"],
-                        "active_regime": active_ref_dict["regime"],
+                        "active_model_type": active_model_type,
+                        "active_model_id": active_model_id,
+                        "active_model_version": active_model_version,
+                        "active_regime": active_regime,
                     }
                 )
         except Exception as e:
@@ -318,9 +323,7 @@ def run(config: BatchPredictConfig) -> Path:
             )
 
     # 2) Run shadow predictions for all discovered models
-    # Mark is_active by comparing resolved artifact path if possible.
-    # If your discovered spec uses latest.joblib, it won't match the active timestamp path,
-    # so we ONLY set is_active=True for the explicit registry row above.
+    # We only mark is_active=True for the explicit registry row above.
     for spec in models:
         model_path = Path(spec["model_path"])
         try:
@@ -335,7 +338,7 @@ def run(config: BatchPredictConfig) -> Path:
 
             preds = model.predict(X_clean)
 
-            for rid, pred in zip(row_ids_clean, preds):
+            for rid, pred in zip(row_ids_clean, preds, strict=False):
                 rows.append(
                     {
                         "row_id": int(rid),
@@ -346,10 +349,10 @@ def run(config: BatchPredictConfig) -> Path:
                         "features_path": str(config.features_path),
                         "model_path": str(model_path),
                         "is_active": False,
-                        "active_model_type": active_ref_dict["model_type"] if active_ref_dict else None,
-                        "active_model_id": active_ref_dict["model_id"] if active_ref_dict else None,
-                        "active_model_version": active_ref_dict["version"] if active_ref_dict else None,
-                        "active_regime": active_ref_dict["regime"] if active_ref_dict else None,
+                        "active_model_type": active_model_type,
+                        "active_model_id": active_model_id,
+                        "active_model_version": active_model_version,
+                        "active_regime": active_regime,
                     }
                 )
 
@@ -384,7 +387,7 @@ def run(config: BatchPredictConfig) -> Path:
     shutil.copyfile(output_path, latest_path)
 
     config.runs_dir.mkdir(parents=True, exist_ok=True)
-    run_meta: Dict[str, Any] = {
+    run_meta: dict[str, Any] = {
         "rows_with_nan_or_inf": nan_rows,
         "run_type": "batch_inference",
         "timestamp": ts,

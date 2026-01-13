@@ -2,13 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import joblib
 import yaml
-
 
 REGISTRY_DIR = Path("registry")
 ACTIVE_FILE = REGISTRY_DIR / "active_model.yaml"
@@ -24,13 +23,13 @@ class ActiveModelRef:
     model_id: str
     version: str  # keep as str for safety (yaml may parse ints)
     artifact_path: Path
-    regime: Optional[str] = None
-    metadata_path: Optional[Path] = None
-    updated_at: Optional[str] = None
+    regime: str | None = None
+    metadata_path: Path | None = None
+    updated_at: str | None = None
 
 
 def _now_iso_z() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _validate_active_payload(payload: dict[str, Any]) -> ActiveModelRef:
@@ -120,7 +119,9 @@ def write_active(ref: ActiveModelRef, active_file: Path = ACTIVE_FILE) -> None:
         yaml.safe_dump(payload, f, sort_keys=False)
 
 
-def load_active_model(active_file: Path = ACTIVE_FILE) -> Tuple[Any, Optional[dict[str, Any]], ActiveModelRef]:
+def load_active_model(
+    active_file: Path = ACTIVE_FILE,
+) -> tuple[Any, dict[str, Any] | None, ActiveModelRef]:
     """
     Load the active model artifact (joblib) and optional metadata (json-like dict).
     Returns (model, metadata_or_none, ref).
@@ -132,7 +133,7 @@ def load_active_model(active_file: Path = ACTIVE_FILE) -> Tuple[Any, Optional[di
 
     model = joblib.load(ref.artifact_path)
 
-    metadata: Optional[dict[str, Any]] = None
+    metadata: dict[str, Any] | None = None
     if ref.metadata_path is not None:
         if not ref.metadata_path.exists():
             raise RegistryError(f"Active model metadata not found: {ref.metadata_path}")
