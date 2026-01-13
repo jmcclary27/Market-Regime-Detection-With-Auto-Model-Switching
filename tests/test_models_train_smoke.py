@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 import joblib
@@ -20,23 +19,47 @@ def test_train_produces_artifacts(tmp_path: Path) -> None:
     models_dir = tmp_path / "models"
     (models_dir / "pretrained").mkdir(parents=True, exist_ok=True)
 
-    # Copy fixture parquet files from repo into tmp_path
-    repo_feat = Path("data/features/latest.parquet")
-    repo_reg = Path("data/regimes/latest.parquet")
-    assert repo_feat.exists(), "Missing repo fixture: data/features/latest.parquet"
-    assert repo_reg.exists(), "Missing repo fixture: data/regimes/latest.parquet"
+    # ---------------------------------------------------------------------
+    # Create fixture parquet files INSIDE tmp_path (CI-safe, repo data ignored)
+    # ---------------------------------------------------------------------
+    n = 260  # enough rows so bullish subset > 50 after shift/dropna
+
+    timestamps = pd.date_range("2020-01-01", periods=n, freq="D")
+
+    # Build a simple, deterministic-ish price series
+    close = pd.Series(range(n), dtype="float64") + 100.0
+    import numpy as np
+    log_return_1 = np.log(close / close.shift(1)).fillna(0.0)
+    # Rolling mean, fill early NaNs
+    sma_10 = close.rolling(10).mean().bfill()
+
+    features_df = pd.DataFrame(
+        {
+            "timestamp": timestamps,
+            "close": close,
+            "log_return_1": log_return_1,
+            "sma_10": sma_10,
+        }
+    )
+
+    # Regimes: first 200 bullish, remaining bearish (gives plenty bullish rows)
+    regimes_df = pd.DataFrame(
+        {
+            "timestamp": timestamps,
+            "regime": ["bullish"] * 200 + ["bearish"] * (n - 200),
+        }
+    )
 
     tmp_feat = data_dir / "features" / "latest.parquet"
     tmp_reg = data_dir / "regimes" / "latest.parquet"
-    shutil.copy2(repo_feat, tmp_feat)
-    shutil.copy2(repo_reg, tmp_reg)
+    features_df.to_parquet(tmp_feat, index=False)
+    regimes_df.to_parquet(tmp_reg, index=False)
 
     # Load in tmp (sanity)
     tmp_feats = pd.read_parquet(tmp_feat)
     tmp_regs = pd.read_parquet(tmp_reg)
 
-    # Build a "pretrained" expert artifact INSIDE the test env (avoids pickle/numpy issues)
-    # This mirrors tools/make_pretrained_expert.py but runs in-process for hermetic tests.
+    # Build a "pretrained" expert artifact INSIDE the test env
     df = tmp_feats.merge(tmp_regs, on="timestamp", how="inner")
     df = df.sort_values("timestamp").reset_index(drop=True)
     df["target_next_return"] = df["log_return_1"].shift(-1)
@@ -77,7 +100,6 @@ def test_train_produces_artifacts(tmp_path: Path) -> None:
         baseline_models_dir=models_dir / "baseline",
         pretrained_expert_path=expert_path,
         experts_dir=models_dir / "experts",
-        # Keep MLflow local to tmp_path (train.py should normalize this on Windows)
         tracking_uri=str(tmp_path / "mlruns"),
         experiment_name="test-market-regime-auto-switch",
     )
