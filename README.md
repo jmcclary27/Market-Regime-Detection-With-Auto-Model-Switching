@@ -220,3 +220,14 @@ Running the pipeline will execute, in order:
 ```bash
 python -m src.pipeline.run -v
 ```
+
+## CI + Hardening
+
+Local quality gates (same as CI):
+
+```bash
+ruff check .
+ruff format --check .
+mypy src tests
+pytest -q
+```
