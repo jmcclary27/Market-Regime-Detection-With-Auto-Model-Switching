@@ -37,7 +37,7 @@ def main() -> None:
     raw_dir = Path(cfg["data"]["raw_path"])
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    runs_dir = Path("runs")
+    runs_dir = Path("data/runs")
     runs_dir.mkdir(parents=True, exist_ok=True)
 
     started = datetime.now(UTC)
