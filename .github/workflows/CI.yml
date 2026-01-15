@@ -6,35 +6,34 @@ on:
     branches: ["main"]
 
 jobs:
-  quality-checks:
+  docker-quality-checks:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the image once, reuse it for all checks
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
         with:
-          python-version: "3.11"
+          context: .
+          load: true
+          tags: market-regime:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Ruff (lint) in container
+        run: docker run --rm market-regime:ci ruff
 
-      - name: Ruff (lint)
-        run: |
-          ruff check .
+      - name: Ruff (format check) in container
+        run: docker run --rm market-regime:ci sh -lc "ruff format --check ."
 
-      - name: Ruff (format)
-        run: |
-          ruff format --check .
+      - name: Mypy (type check) in container
+        run: docker run --rm market-regime:ci sh -lc "mypy src tests"
 
-      - name: Mypy (type check)
-        run: |
-          mypy src tests
-
-      - name: Pytest
-        run: |
-          pytest -q
+      - name: Pytest in container
+        run: docker run --rm market-regime:ci test
