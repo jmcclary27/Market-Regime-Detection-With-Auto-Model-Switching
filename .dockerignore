@@ -1,0 +1,22 @@
+.git
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+dist/
+build/
+
+# Don’t bake runtime artifacts into the image, mount them instead
+data/
+models/
+mlruns/
+runs/
+registry/
+
+*.parquet
+*.joblib
+*.log

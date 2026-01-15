@@ -1,0 +1,13 @@
+services:
+  market:
+    build: .
+    container_name: market-regime
+    working_dir: /app
+    environment:
+      - PYTHONPATH=/app
+      - MLFLOW_TRACKING_URI=file:/app/mlruns
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./mlruns:/app/mlruns
+    restart: unless-stopped
