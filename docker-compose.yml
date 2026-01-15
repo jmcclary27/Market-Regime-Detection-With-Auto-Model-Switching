@@ -6,6 +6,9 @@ services:
     environment:
       - PYTHONPATH=/app
       - MLFLOW_TRACKING_URI=file:/app/mlruns
+      - RUFF_CACHE_DIR=/tmp/ruff_cache
+      - PYTEST_ADDOPTS=-o cache_dir=/tmp/pytest_cache
+      - MYPY_CACHE_DIR=/tmp/mypy_cache
     volumes:
       - ./data:/app/data
       - ./models:/app/models
