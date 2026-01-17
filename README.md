@@ -231,3 +231,16 @@ ruff format --check .
 mypy src tests
 pytest -q
 ```
+
+### Data and model versioning (DVC)
+
+This repo uses DVC to version datasets and trained model artifacts, backed by an S3 remote.
+
+- Pull tracked data/model artifacts:
+  `dvc pull`
+
+- Reproduce the pipeline (once `dvc.yaml` is in place):
+  `dvc repro`
+
+- After generating new artifacts:
+  `dvc push`

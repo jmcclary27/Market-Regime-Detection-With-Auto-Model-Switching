@@ -1,0 +1,23 @@
+schema: '2.0'
+stages:
+  pipeline:
+    cmd: python -m src.pipeline.run
+    deps:
+    - path: src
+      hash: md5
+      md5: db98caf96abcc1e93b6820f054865299.dir
+      size: 196212
+      nfiles: 51
+    outs:
+    - path: data/features/latest.parquet
+      hash: md5
+      md5: 09322b01a7d5f164550f4378ec205f61
+      size: 3526
+    - path: data/regimes/latest.parquet
+      hash: md5
+      md5: c6cae3cf775038eb83bdbeba75245eea
+      size: 4869
+    - path: data/scorecards/latest.parquet
+      hash: md5
+      md5: 2f57a6a0a1eea4f77a8758b928856bbc
+      size: 4002

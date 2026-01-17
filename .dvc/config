@@ -1,0 +1,6 @@
+[core]
+    remote = s3
+['remote "s3"']
+    url = s3://market-regime-dvc/dvc-cache
+    region = us-east-2
+    use_ssl = true
