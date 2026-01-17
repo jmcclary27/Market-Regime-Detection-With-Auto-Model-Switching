@@ -44,7 +44,7 @@ def run(
 
     regimes_path = regimes_dir / f"{timestamp}.parquet"
     out.to_parquet(regimes_path, index=False)
-    
+
     latest_path = regimes_dir / "latest.parquet"
     out.to_parquet(latest_path, index=False)
 
