@@ -1,0 +1,6 @@
+[core]
+    remote = s3
+['remote "s3"']
+    url = s3://market-regime-dvc
+    region = us-east-1
+    use_ssl = true
