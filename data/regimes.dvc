@@ -1,0 +1,6 @@
+outs:
+- md5: 345f3c43dfb1d84a8026c60231f3cfc9.dir
+  size: 58518
+  nfiles: 11
+  hash: md5
+  path: regimes

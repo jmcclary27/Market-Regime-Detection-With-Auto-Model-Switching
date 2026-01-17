@@ -70,3 +70,4 @@ mlflow.db-journal
 # Temporary / scratch
 ############################
 runs/
+/models
