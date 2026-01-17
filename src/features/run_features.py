@@ -93,6 +93,12 @@ def run(
 
     manifest_path = features_dir / f"{timestamp}.manifest.json"
     write_manifest(manifest, manifest_path)
+    
+    latest_parquet = features_dir / "latest.parquet"
+    feats.to_parquet(latest_parquet, index=False)
+
+    latest_manifest = features_dir / "latest.manifest.json"
+    write_manifest(manifest, latest_manifest)
 
     print(f"Wrote: {parquet_path}")
     print(f"Wrote: {manifest_path}")
