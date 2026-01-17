@@ -1,0 +1,9 @@
+stages:
+  pipeline:
+    cmd: python -m src.pipeline.run
+    deps:
+    - src
+    outs:
+    - data/features/latest.parquet
+    - data/regimes/latest.parquet
+    - data/scorecards/latest.parquet
