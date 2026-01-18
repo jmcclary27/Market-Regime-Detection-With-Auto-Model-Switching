@@ -1,9 +1,52 @@
 stages:
-  pipeline:
-    cmd: python -m src.pipeline.run
+  poll:
+    cmd: python -m src.jobs.poll_market_data
     deps:
-    - src
+      - src/jobs/poll_market_data.py
     outs:
-    - data/features/latest.parquet
-    - data/regimes/latest.parquet
-    - data/scorecards/latest.parquet
+      - data/raw/SPY_latest.csv
+
+  features:
+    cmd: python -m src.features.run_features --input data/raw/SPY_latest.csv --timestamp ${run_ts}
+    deps:
+      - src/features
+      - data/raw/SPY_latest.csv
+    params:
+      - run_ts
+    outs:
+      - data/features/latest.parquet
+
+  regimes:
+    cmd: python -m src.regimes.run_regime_detection --input data/features/latest.parquet --timestamp ${run_ts}
+    deps:
+      - src/regimes
+      - data/features/latest.parquet
+    params:
+      - run_ts
+    outs:
+      - data/regimes/latest.parquet
+
+  predict:
+    cmd: python -m src.inference.batch_predict --features-path data/features/latest.parquet
+    deps:
+      - src/inference
+      - data/features/latest.parquet
+      - data/regimes/latest.parquet
+    outs:
+      - data/predictions/latest.parquet
+
+  evaluate:
+    cmd: python -m src.eval.run_evaluator --features data/features/latest.parquet --regimes data/regimes/latest.parquet --predictions data/predictions/latest.parquet --out-dir data/scorecards
+    deps:
+      - src/eval
+      - data/features/latest.parquet
+      - data/regimes/latest.parquet
+      - data/predictions/latest.parquet
+    outs:
+      - data/scorecards/latest.parquet
+
+  switch:
+    cmd: python -m src.deploy.switcher
+    deps:
+      - src/deploy
+      - data/scorecards/latest.parquet

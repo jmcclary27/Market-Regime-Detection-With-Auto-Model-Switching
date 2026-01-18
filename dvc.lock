@@ -1,23 +1,56 @@
 schema: '2.0'
 stages:
-  pipeline:
-    cmd: python -m src.pipeline.run
+  poll:
+    cmd: python -m src.jobs.poll_market_data
     deps:
-    - path: src
+    - path: src/jobs/poll_market_data.py
       hash: md5
-      md5: db98caf96abcc1e93b6820f054865299.dir
-      size: 196212
-      nfiles: 51
+      md5: 52e37e04cf1fc3d265ac1229b30881eb
+      size: 1978
+    outs:
+    - path: data/raw/SPY_latest.csv
+      hash: md5
+      md5: 4681dcf604bb5dd80d05820e58037e70
+      size: 705
+  features:
+    cmd: python -m src.features.run_features --input data/raw/SPY_latest.csv 
+      --timestamp manual
+    deps:
+    - path: data/raw/SPY_latest.csv
+      hash: md5
+      md5: 4681dcf604bb5dd80d05820e58037e70
+      size: 705
+    - path: src/features
+      hash: md5
+      md5: c99016ca396a2346315dc005a92eb877.dir
+      size: 20252
+      nfiles: 8
+    params:
+      params.yaml:
+        run_ts: manual
     outs:
     - path: data/features/latest.parquet
       hash: md5
       md5: 09322b01a7d5f164550f4378ec205f61
       size: 3526
+  regimes:
+    cmd: python -m src.regimes.run_regime_detection --input 
+      data/features/latest.parquet --timestamp manual
+    deps:
+    - path: data/features/latest.parquet
+      hash: md5
+      md5: 09322b01a7d5f164550f4378ec205f61
+      size: 3526
+    - path: src/regimes
+      hash: md5
+      md5: 4a62c89893c0abfd23abf8b8f93ef93e.dir
+      size: 10625
+      nfiles: 6
+    params:
+      params.yaml:
+        run_ts: manual
+    outs:
     - path: data/regimes/latest.parquet
       hash: md5
       md5: c6cae3cf775038eb83bdbeba75245eea
       size: 4869
-    - path: data/scorecards/latest.parquet
-      hash: md5
-      md5: 2f57a6a0a1eea4f77a8758b928856bbc
-      size: 4002
