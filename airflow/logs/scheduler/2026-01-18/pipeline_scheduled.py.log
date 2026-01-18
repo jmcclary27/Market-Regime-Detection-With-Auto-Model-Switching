@@ -408,3 +408,17 @@
 [2026-01-18T18:54:23.801+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:23.801+0000] {dag.py:3089} INFO - Sync 1 DAGs
 [2026-01-18T18:54:23.828+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:23.827+0000] {dag.py:3947} INFO - Setting next_dagrun for pipeline_scheduled to 2026-01-18 18:00:00+00:00, run_after=2026-01-18 19:00:00+00:00
 [2026-01-18T18:54:23.849+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/pipeline_scheduled.py took 0.130 seconds
+[2026-01-18T18:54:54.112+0000] {processor.py:161} INFO - Started process (PID=764) to work on /opt/airflow/dags/pipeline_scheduled.py
+[2026-01-18T18:54:54.113+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/pipeline_scheduled.py for tasks to queue
+[2026-01-18T18:54:54.116+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:54.115+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/pipeline_scheduled.py
+[2026-01-18T18:54:54.143+0000] {processor.py:840} INFO - DAG(s) 'pipeline_scheduled' retrieved from /opt/airflow/dags/pipeline_scheduled.py
+[2026-01-18T18:54:54.180+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:54.179+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2026-01-18T18:54:54.204+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:54.204+0000] {dag.py:3947} INFO - Setting next_dagrun for pipeline_scheduled to 2026-01-18 18:00:00+00:00, run_after=2026-01-18 19:00:00+00:00
+[2026-01-18T18:54:54.226+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/pipeline_scheduled.py took 0.120 seconds
+[2026-01-18T18:55:24.495+0000] {processor.py:161} INFO - Started process (PID=776) to work on /opt/airflow/dags/pipeline_scheduled.py
+[2026-01-18T18:55:24.496+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/pipeline_scheduled.py for tasks to queue
+[2026-01-18T18:55:24.498+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:55:24.498+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/pipeline_scheduled.py
+[2026-01-18T18:55:24.528+0000] {processor.py:840} INFO - DAG(s) 'pipeline_scheduled' retrieved from /opt/airflow/dags/pipeline_scheduled.py
+[2026-01-18T18:55:24.571+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:55:24.570+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2026-01-18T18:55:24.598+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:55:24.598+0000] {dag.py:3947} INFO - Setting next_dagrun for pipeline_scheduled to 2026-01-18 18:00:00+00:00, run_after=2026-01-18 19:00:00+00:00
+[2026-01-18T18:55:24.622+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/pipeline_scheduled.py took 0.135 seconds

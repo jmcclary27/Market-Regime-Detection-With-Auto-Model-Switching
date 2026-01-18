@@ -408,3 +408,17 @@
 [2026-01-18T18:54:23.785+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:23.785+0000] {dag.py:3089} INFO - Sync 1 DAGs
 [2026-01-18T18:54:23.800+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:23.799+0000] {dag.py:3947} INFO - Setting next_dagrun for pipeline_one_off to None, run_after=None
 [2026-01-18T18:54:23.826+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/pipeline_one_off.py took 0.120 seconds
+[2026-01-18T18:54:54.101+0000] {processor.py:161} INFO - Started process (PID=761) to work on /opt/airflow/dags/pipeline_one_off.py
+[2026-01-18T18:54:54.102+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/pipeline_one_off.py for tasks to queue
+[2026-01-18T18:54:54.104+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:54.104+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/pipeline_one_off.py
+[2026-01-18T18:54:54.130+0000] {processor.py:840} INFO - DAG(s) 'pipeline_one_off' retrieved from /opt/airflow/dags/pipeline_one_off.py
+[2026-01-18T18:54:54.168+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:54.168+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2026-01-18T18:54:54.182+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:54:54.181+0000] {dag.py:3947} INFO - Setting next_dagrun for pipeline_one_off to None, run_after=None
+[2026-01-18T18:54:54.206+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/pipeline_one_off.py took 0.111 seconds
+[2026-01-18T18:55:00.310+0000] {processor.py:161} INFO - Started process (PID=771) to work on /opt/airflow/dags/pipeline_one_off.py
+[2026-01-18T18:55:00.311+0000] {processor.py:830} INFO - Processing file /opt/airflow/dags/pipeline_one_off.py for tasks to queue
+[2026-01-18T18:55:00.314+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:55:00.314+0000] {dagbag.py:545} INFO - Filling up the DagBag from /opt/airflow/dags/pipeline_one_off.py
+[2026-01-18T18:55:00.354+0000] {processor.py:840} INFO - DAG(s) 'pipeline_one_off' retrieved from /opt/airflow/dags/pipeline_one_off.py
+[2026-01-18T18:55:00.397+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:55:00.397+0000] {dag.py:3089} INFO - Sync 1 DAGs
+[2026-01-18T18:55:00.414+0000] {logging_mixin.py:188} INFO - [2026-01-18T18:55:00.414+0000] {dag.py:3947} INFO - Setting next_dagrun for pipeline_one_off to None, run_after=None
+[2026-01-18T18:55:00.451+0000] {processor.py:183} INFO - Processing /opt/airflow/dags/pipeline_one_off.py took 0.148 seconds
