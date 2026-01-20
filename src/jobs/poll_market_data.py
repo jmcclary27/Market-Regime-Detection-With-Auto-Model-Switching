@@ -38,7 +38,7 @@ def main() -> None:
         )
 
     start_date = "2020-01-01"
-    end_date = "2020-03-01" 
+    end_date = "2020-03-01"
 
     raw_dir = Path(cfg["data"]["raw_path"])
     raw_dir.mkdir(parents=True, exist_ok=True)

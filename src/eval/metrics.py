@@ -68,9 +68,7 @@ def _resolve_col_df(df: pd.DataFrame, base: str) -> str:
 # -------------------------
 # IO helpers
 # -------------------------
-def _ensure_row_id(
-    df: pd.DataFrame, *, sort_cols: list[str]
-) -> tuple[pd.DataFrame, list[str]]:
+def _ensure_row_id(df: pd.DataFrame, *, sort_cols: list[str]) -> tuple[pd.DataFrame, list[str]]:
     """
     Ensure a deterministic row_id exists. If not present, create it by:
     sort -> reset_index(drop=True) -> row_id = index

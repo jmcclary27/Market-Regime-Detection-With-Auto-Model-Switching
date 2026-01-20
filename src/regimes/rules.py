@@ -27,9 +27,7 @@ def _resolve_col(row: pd.Series, base: str) -> str:
         return f"{base}_x"
     if f"{base}_y" in row.index:
         return f"{base}_y"
-    raise KeyError(
-        f"Expected column '{base}' (or suffixed) not found. cols={list(row.index)}"
-    )
+    raise KeyError(f"Expected column '{base}' (or suffixed) not found. cols={list(row.index)}")
 
 
 def label_regime_row(row: pd.Series) -> RegimeResult:
