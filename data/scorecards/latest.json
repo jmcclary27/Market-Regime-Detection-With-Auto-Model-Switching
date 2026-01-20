@@ -3,52 +3,52 @@
     "bearish": {
       "by_model": {
         "baseline": {
-          "mae": 3654948390495049.5,
-          "rmse": 3654949249713114.0
+          "mae": 2959884002336061.5,
+          "rmse": 2959884698155956.5
         },
         "expert_bullish_ridge_v0": {
-          "mae": 3703234413361172.0,
-          "rmse": 3703235283930484.0
+          "mae": 1119736362744909.1,
+          "rmse": 1119736625976453.9
         }
       },
       "n": 12,
       "rank": [
-        "baseline",
-        "expert_bullish_ridge_v0"
+        "expert_bullish_ridge_v0",
+        "baseline"
       ]
     },
     "bullish": {
       "by_model": {
         "baseline": {
-          "mae": 3652340565103770.0,
-          "rmse": 3652341267588954.0
+          "mae": 2957772109134886.5,
+          "rmse": 2957772678027914.5
         },
         "expert_bullish_ridge_v0": {
-          "mae": 3700592135632124.0,
-          "rmse": 3700592847397936.5
+          "mae": 1118937424810272.8,
+          "rmse": 1118937640024858.9
         }
       },
       "n": 32,
       "rank": [
-        "baseline",
-        "expert_bullish_ridge_v0"
+        "expert_bullish_ridge_v0",
+        "baseline"
       ]
     },
     "sideways": {
       "by_model": {
         "baseline": {
-          "mae": 3653451074480917.5,
-          "rmse": 3653452082994782.0
+          "mae": 2958671432077014.0,
+          "rmse": 2958672248801010.0
         },
         "expert_bullish_ridge_v0": {
-          "mae": 3701717316100474.5,
-          "rmse": 3701718337937954.0
+          "mae": 1119277642399663.5,
+          "rmse": 1119277951369729.9
         }
       },
       "n": 18,
       "rank": [
-        "baseline",
-        "expert_bullish_ridge_v0"
+        "expert_bullish_ridge_v0",
+        "baseline"
       ]
     }
   },
@@ -69,23 +69,23 @@
   "overall": {
     "by_model": {
       "baseline": {
-        "mae": 3653167711450286.0,
-        "rmse": 3653168668657360.5
+        "mae": 2958441956415086.5,
+        "rmse": 2958442731589344.5
       },
       "expert_bullish_ridge_v0": {
-        "mae": 3701430209522106.0,
-        "rmse": 3701431179374974.0
+        "mae": 1119190830807444.8,
+        "rmse": 1119191124059073.4
       }
     },
     "n": 62,
     "rank": [
-      "baseline",
-      "expert_bullish_ridge_v0"
+      "expert_bullish_ridge_v0",
+      "baseline"
     ]
   },
   "target": {
     "requested_target_col": "log_return_1",
     "y_true_col": "log_return_1_x"
   },
-  "timestamp": "1768926406"
+  "timestamp": "1768930289"
 }

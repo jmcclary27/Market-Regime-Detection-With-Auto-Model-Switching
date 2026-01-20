@@ -54,7 +54,9 @@ def _to_xy_wide(feats: pd.DataFrame, *, symbols: tuple[str, str]) -> pd.DataFram
     ]
     missing2 = [c for c in ordered if c not in wide.columns]
     if missing2:
-        raise ValueError(f"Wide merge did not produce expected columns: {missing2}, cols={list(wide.columns)}")
+        raise ValueError(
+            f"Wide merge did not produce expected columns: {missing2}, cols={list(wide.columns)}"
+        )
 
     return wide[ordered].sort_values("timestamp").reset_index(drop=True)
 
@@ -115,7 +117,7 @@ def run(
     bars = _normalize_bars_columns(bars, symbol=symbol)
 
     feats = build_features(bars)
-    
+
     # If we have at least two symbols, convert to wide *_x/*_y format for pretrained experts
     unique_syms = list(pd.Series(feats["symbol"]).dropna().unique())
     if len(unique_syms) >= 2:

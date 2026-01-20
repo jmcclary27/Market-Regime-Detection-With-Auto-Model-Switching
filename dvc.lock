@@ -5,25 +5,25 @@ stages:
     deps:
     - path: src/jobs/poll_market_data.py
       hash: md5
-      md5: 3784a0e1dc46018e768c4d646937d232
-      size: 2472
+      md5: ce3dbeb0a03bd7cbf5fc669000b38ef5
+      size: 2471
     outs:
     - path: data/raw/latest.csv
       hash: md5
-      md5: 8846e1864c8053b9130471d9c75705eb
-      size: 9239
+      md5: e18f5b9474e348ca44b25e2f6ffcb94a
+      size: 9245
   features:
     cmd: python -m src.features.run_features --input data/raw/latest.csv 
       --timestamp manual
     deps:
     - path: data/raw/latest.csv
       hash: md5
-      md5: 8846e1864c8053b9130471d9c75705eb
-      size: 9239
+      md5: e18f5b9474e348ca44b25e2f6ffcb94a
+      size: 9245
     - path: src/features
       hash: md5
-      md5: c409d79663f09c225adf243d13cadc22.dir
-      size: 24417
+      md5: 134221ae73ca29f747d2390baeb0c197.dir
+      size: 24443
       nfiles: 8
     params:
       params.yaml:
@@ -43,8 +43,8 @@ stages:
       size: 6796
     - path: src/regimes
       hash: md5
-      md5: ec52343a02c03066ee9eb4320df5c9f4.dir
-      size: 12757
+      md5: 3ef489bf75f724e6937e7bfbadacf34d.dir
+      size: 12742
       nfiles: 6
     params:
       params.yaml:
@@ -74,7 +74,7 @@ stages:
     outs:
     - path: data/predictions/latest.parquet
       hash: md5
-      md5: 4176147fcd4bb7efba92d70acf25f55f
+      md5: d6196489db8188e0cb1eaf44ffdc4e1d
       size: 8265
   evaluate:
     cmd: python -m src.eval.run_evaluator --features 
@@ -87,7 +87,7 @@ stages:
       size: 6796
     - path: data/predictions/latest.parquet
       hash: md5
-      md5: 4176147fcd4bb7efba92d70acf25f55f
+      md5: d6196489db8188e0cb1eaf44ffdc4e1d
       size: 8265
     - path: data/regimes/latest.parquet
       hash: md5
@@ -95,20 +95,20 @@ stages:
       size: 8268
     - path: src/eval
       hash: md5
-      md5: 44cbf5fa476bce75cdad924f900fec56.dir
-      size: 33196
+      md5: c13b6ad18fa203aa1ba8cfd0cd05e65d.dir
+      size: 33188
       nfiles: 6
     outs:
     - path: data/scorecards/latest.parquet
       hash: md5
-      md5: 4c4f774bf5f6a4f132952477d4e54c4b
+      md5: ea13a6bb83f69c6dbf6ae3a058b71c75
       size: 4032
   switch:
     cmd: python -m src.deploy.switcher
     deps:
     - path: data/scorecards/latest.parquet
       hash: md5
-      md5: 4c4f774bf5f6a4f132952477d4e54c4b
+      md5: ea13a6bb83f69c6dbf6ae3a058b71c75
       size: 4032
     - path: src/deploy
       hash: md5

@@ -14,10 +14,10 @@ def test_poll_job_writes_files(tmp_path: Path, monkeypatch) -> None:
     # Assert raw output exists
     raw_dir = Path("data") / "raw"
     assert raw_dir.exists()
-    assert any(raw_dir.glob("SPY_*.csv"))
-    assert (raw_dir / "SPY_latest.csv").exists()
+    assert any(raw_dir.glob("SPY_*.csv")) or any(raw_dir.glob("SPY-*_*.csv"))
+    assert (raw_dir / "latest.csv").exists()
 
     # Assert run log exists
     runs_dir = Path("data") / "runs"
     assert runs_dir.exists()
-    assert any(runs_dir.glob("poll_SPY_*.json"))
+    assert any(runs_dir.glob("poll_SPY_*.json")) or any(runs_dir.glob("poll_SPY-*_*.json"))
