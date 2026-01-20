@@ -1,3 +1,4 @@
+# src/eval/metrics.py
 from __future__ import annotations
 
 import json
@@ -40,23 +41,60 @@ _METRIC_FNS = {
 
 
 # -------------------------
+# Schema helpers
+# -------------------------
+def _resolve_col_df(df: pd.DataFrame, base: str) -> str:
+    """
+    Resolve base / base_x / base_y in a dataframe.
+
+    Priority:
+      1) base
+      2) base_x
+      3) base_y
+
+    This lets eval work for both long (single symbol) and wide (x/y) schemas.
+    """
+    if base in df.columns:
+        return base
+    if f"{base}_x" in df.columns:
+        return f"{base}_x"
+    if f"{base}_y" in df.columns:
+        return f"{base}_y"
+    raise ValueError(
+        f"Missing required column '{base}' (or suffixed). Available: {list(df.columns)}"
+    )
+
+
+# -------------------------
 # IO helpers
 # -------------------------
-def _ensure_row_id(df: pd.DataFrame, *, sort_cols: list[str]) -> pd.DataFrame:
+def _ensure_row_id(
+    df: pd.DataFrame, *, sort_cols: list[str]
+) -> tuple[pd.DataFrame, list[str]]:
     """
     Ensure a deterministic row_id exists. If not present, create it by:
     sort -> reset_index(drop=True) -> row_id = index
+
+    Backward compatible across schemas:
+      - long schema: expects ["timestamp","symbol"] (or configured)
+      - wide schema: symbol often does not exist, so we fall back to ["timestamp"]
     """
     if "row_id" in df.columns:
-        return df
+        return df, sort_cols
 
-    missing = [c for c in sort_cols if c not in df.columns]
+    effective_sort_cols = list(sort_cols)
+
+    # Wide schema compatibility: allow ("timestamp","symbol") configs even if symbol is absent.
+    if "symbol" in effective_sort_cols and "symbol" not in df.columns:
+        effective_sort_cols = [c for c in effective_sort_cols if c != "symbol"]
+
+    missing = [c for c in effective_sort_cols if c not in df.columns]
     if missing:
         raise ValueError(f"Cannot create row_id, missing sort cols: {missing}")
 
-    out = df.sort_values(sort_cols, kind="mergesort").reset_index(drop=True).copy()
+    out = df.sort_values(effective_sort_cols, kind="mergesort").reset_index(drop=True).copy()
     out["row_id"] = out.index.astype(int)
-    return out
+    return out, effective_sort_cols
 
 
 def load_latest_parquet(dirpath: str | Path) -> tuple[pd.DataFrame, Path]:
@@ -100,32 +138,39 @@ def build_eval_frame(
     if missing_pred:
         raise ValueError(f"Predictions missing columns: {sorted(missing_pred)}")
 
-    feat = _ensure_row_id(features, sort_cols=list(cfg.row_id_sort_cols))
-    reg = _ensure_row_id(regimes, sort_cols=list(cfg.row_id_sort_cols))
+    feat, feat_sort_cols = _ensure_row_id(features, sort_cols=list(cfg.row_id_sort_cols))
+    reg, reg_sort_cols = _ensure_row_id(regimes, sort_cols=list(cfg.row_id_sort_cols))
 
-    if cfg.target_col not in feat.columns:
-        raise ValueError(
-            f"Features missing target_col={cfg.target_col}. Available: {list(feat.columns)}"
-        )
+    # Resolve target column across schemas (log_return_1 vs log_return_1_x/log_return_1_y)
+    effective_target_col = _resolve_col_df(feat, cfg.target_col)
+
     if cfg.regime_col not in reg.columns:
         raise ValueError(
             f"Regimes missing regime_col={cfg.regime_col}. Available: {list(reg.columns)}"
         )
 
     base = predictions[["row_id", cfg.model_col, cfg.pred_col]].copy()
-    base = base.merge(
-        feat[["row_id", cfg.target_col]],
-        on="row_id",
-        how="left",
-        validate="many_to_one",
-    ).merge(
-        reg[["row_id", cfg.regime_col]],
-        on="row_id",
-        how="left",
-        validate="many_to_one",
+    base = (
+        base.merge(
+            feat[["row_id", effective_target_col]],
+            on="row_id",
+            how="left",
+            validate="many_to_one",
+        )
+        .merge(
+            reg[["row_id", cfg.regime_col]],
+            on="row_id",
+            how="left",
+            validate="many_to_one",
+        )
+        .rename(columns={effective_target_col: "y_true"})
     )
 
-    base = base.rename(columns={cfg.target_col: "y_true"})
+    # Store what rules actually got used (useful for debugging and scorecard honesty)
+    base.attrs["feat_row_id_sort_cols"] = feat_sort_cols
+    base.attrs["reg_row_id_sort_cols"] = reg_sort_cols
+    base.attrs["effective_target_col"] = effective_target_col
+
     return base
 
 
@@ -232,6 +277,10 @@ def build_scorecard(
             "rank": rank,
         }
 
+    feat_cols_used = eval_df.attrs.get("feat_row_id_sort_cols", list(cfg.row_id_sort_cols))
+    reg_cols_used = eval_df.attrs.get("reg_row_id_sort_cols", list(cfg.row_id_sort_cols))
+    effective_target_col = eval_df.attrs.get("effective_target_col", cfg.target_col)
+
     scorecard: dict[str, Any] = {
         "timestamp": timestamp,
         "data": {
@@ -240,7 +289,8 @@ def build_scorecard(
             "predictions_path": str(predictions_path),
         },
         "target": {
-            "y_true_col": cfg.target_col,
+            "y_true_col": str(effective_target_col),
+            "requested_target_col": str(cfg.target_col),
         },
         "metrics": list(cfg.metrics),
         "overall": {
@@ -252,7 +302,10 @@ def build_scorecard(
         "notes": {
             "min_regime_n": int(cfg.min_regime_n),
             "scoring_rule": "lower_is_better" if cfg.lower_is_better else "higher_is_better",
-            "row_id_rule": f"sort {list(cfg.row_id_sort_cols)} then row_id=index",
+            "row_id_rule": (
+                f"features: sort {feat_cols_used} then row_id=index; "
+                f"regimes: sort {reg_cols_used} then row_id=index"
+            ),
         },
     }
     return scorecard

@@ -1,9 +1,12 @@
+# src/jobs/poll_market_data.py
 from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pandas as pd
 
 from src.config.load_config import load_config
 from src.ingestion.fetch_market_data import fetch_market_data
@@ -13,7 +16,7 @@ from src.ingestion.fetch_market_data import fetch_market_data
 class PollRunRecord:
     started_at_utc: str
     finished_at_utc: str
-    symbol: str
+    symbols: list[str]
     start_date: str
     end_date: str
     output_path: str
@@ -22,17 +25,20 @@ class PollRunRecord:
 
 
 def _utc_ts() -> str:
-    # File-system friendly timestamp
     return datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
 def main() -> None:
     cfg = load_config()
 
-    symbol = cfg["market"]["symbols"][0]
-    # keep PR1 tiny and deterministic, can be config-driven later
+    symbols = list(cfg["market"]["symbols"][:2])
+    if len(symbols) < 2:
+        raise ValueError(
+            "Need at least 2 symbols in cfg['market']['symbols'] for *_x/*_y features."
+        )
+
     start_date = "2020-01-01"
-    end_date = "2020-01-10"
+    end_date = "2020-03-01" 
 
     raw_dir = Path(cfg["data"]["raw_path"])
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -42,29 +48,41 @@ def main() -> None:
 
     started = datetime.now(UTC)
 
-    df = fetch_market_data(symbol, start_date, end_date)
+    frames: list[pd.DataFrame] = []
+    for sym in symbols:
+        df = fetch_market_data(sym, start_date, end_date).copy()
+
+        # Ensure symbol column exists, even if fetch_market_data returns only an index + OHLCV
+        if "symbol" not in df.columns:
+            df["symbol"] = sym
+
+        frames.append(df)
+
+    bars = pd.concat(frames, axis=0, ignore_index=False)
 
     ts = _utc_ts()
-    output_file = raw_dir / f"{symbol}_{start_date}_{end_date}_{ts}.csv"
-    df.to_csv(output_file, index=True)
+    symbol_tag = "-".join(symbols)
 
-    latest_file = raw_dir / f"{symbol}_latest.csv"
-    df.to_csv(latest_file, index=True)
+    output_file = raw_dir / f"{symbol_tag}_{start_date}_{end_date}_{ts}.csv"
+    bars.to_csv(output_file, index=True)
+
+    latest_file = raw_dir / "latest.csv"
+    bars.to_csv(latest_file, index=True)
 
     finished = datetime.now(UTC)
 
     record = PollRunRecord(
         started_at_utc=started.isoformat(),
         finished_at_utc=finished.isoformat(),
-        symbol=symbol,
+        symbols=symbols,
         start_date=start_date,
         end_date=end_date,
         output_path=str(output_file),
         latest_path=str(latest_file),
-        rows=int(len(df)),
+        rows=int(len(bars)),
     )
 
-    run_log = runs_dir / f"poll_{symbol}_{ts}.json"
+    run_log = runs_dir / f"poll_{symbol_tag}_{ts}.json"
     run_log.write_text(json.dumps(asdict(record), indent=2), encoding="utf-8")
 
     print(f"Wrote: {output_file}")

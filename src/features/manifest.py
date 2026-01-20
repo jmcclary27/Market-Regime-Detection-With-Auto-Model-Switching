@@ -1,3 +1,4 @@
+# src/features/manifest.py
 from __future__ import annotations
 
 import hashlib

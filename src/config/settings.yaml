@@ -1,6 +1,5 @@
 market:
-  symbols:
-    - SPY
+  symbols: ["SPY", "QQQ"]
   frequency: daily
 
 data:

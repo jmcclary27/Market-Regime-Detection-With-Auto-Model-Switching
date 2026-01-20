@@ -4,13 +4,13 @@ stages:
     deps:
       - src/jobs/poll_market_data.py
     outs:
-      - data/raw/SPY_latest.csv
+      - data/raw/latest.csv
 
   features:
-    cmd: python -m src.features.run_features --input data/raw/SPY_latest.csv --timestamp ${run_ts}
+    cmd: python -m src.features.run_features --input data/raw/latest.csv --timestamp ${run_ts}
     deps:
       - src/features
-      - data/raw/SPY_latest.csv
+      - data/raw/latest.csv
     params:
       - run_ts
     outs:
