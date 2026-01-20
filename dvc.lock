@@ -1,23 +1,117 @@
 schema: '2.0'
 stages:
-  pipeline:
-    cmd: python -m src.pipeline.run
+  poll:
+    cmd: python -m src.jobs.poll_market_data
     deps:
-    - path: src
+    - path: src/jobs/poll_market_data.py
       hash: md5
-      md5: db98caf96abcc1e93b6820f054865299.dir
-      size: 196212
-      nfiles: 51
+      md5: 3784a0e1dc46018e768c4d646937d232
+      size: 2472
+    outs:
+    - path: data/raw/latest.csv
+      hash: md5
+      md5: 8846e1864c8053b9130471d9c75705eb
+      size: 9239
+  features:
+    cmd: python -m src.features.run_features --input data/raw/latest.csv 
+      --timestamp manual
+    deps:
+    - path: data/raw/latest.csv
+      hash: md5
+      md5: 8846e1864c8053b9130471d9c75705eb
+      size: 9239
+    - path: src/features
+      hash: md5
+      md5: c409d79663f09c225adf243d13cadc22.dir
+      size: 24417
+      nfiles: 8
+    params:
+      params.yaml:
+        run_ts: manual
     outs:
     - path: data/features/latest.parquet
       hash: md5
-      md5: 09322b01a7d5f164550f4378ec205f61
-      size: 3526
+      md5: a549d019a7184067277d316d4e2e0754
+      size: 6796
+  regimes:
+    cmd: python -m src.regimes.run_regime_detection --input 
+      data/features/latest.parquet --timestamp manual
+    deps:
+    - path: data/features/latest.parquet
+      hash: md5
+      md5: a549d019a7184067277d316d4e2e0754
+      size: 6796
+    - path: src/regimes
+      hash: md5
+      md5: ec52343a02c03066ee9eb4320df5c9f4.dir
+      size: 12757
+      nfiles: 6
+    params:
+      params.yaml:
+        run_ts: manual
+    outs:
     - path: data/regimes/latest.parquet
       hash: md5
-      md5: c6cae3cf775038eb83bdbeba75245eea
-      size: 4869
+      md5: 87b1c862cffc4b6513de9e021b6287b8
+      size: 8268
+  predict:
+    cmd: python -m src.inference.batch_predict --features-path 
+      data/features/latest.parquet
+    deps:
+    - path: data/features/latest.parquet
+      hash: md5
+      md5: a549d019a7184067277d316d4e2e0754
+      size: 6796
+    - path: data/regimes/latest.parquet
+      hash: md5
+      md5: 87b1c862cffc4b6513de9e021b6287b8
+      size: 8268
+    - path: src/inference
+      hash: md5
+      md5: 8562ec11b021812cf7491bcfdc2202d0.dir
+      size: 38920
+      nfiles: 2
+    outs:
+    - path: data/predictions/latest.parquet
+      hash: md5
+      md5: 4176147fcd4bb7efba92d70acf25f55f
+      size: 8265
+  evaluate:
+    cmd: python -m src.eval.run_evaluator --features 
+      data/features/latest.parquet --regimes data/regimes/latest.parquet 
+      --predictions data/predictions/latest.parquet --out-dir data/scorecards
+    deps:
+    - path: data/features/latest.parquet
+      hash: md5
+      md5: a549d019a7184067277d316d4e2e0754
+      size: 6796
+    - path: data/predictions/latest.parquet
+      hash: md5
+      md5: 4176147fcd4bb7efba92d70acf25f55f
+      size: 8265
+    - path: data/regimes/latest.parquet
+      hash: md5
+      md5: 87b1c862cffc4b6513de9e021b6287b8
+      size: 8268
+    - path: src/eval
+      hash: md5
+      md5: 44cbf5fa476bce75cdad924f900fec56.dir
+      size: 33196
+      nfiles: 6
+    outs:
     - path: data/scorecards/latest.parquet
       hash: md5
-      md5: 2f57a6a0a1eea4f77a8758b928856bbc
-      size: 4002
+      md5: 4c4f774bf5f6a4f132952477d4e54c4b
+      size: 4032
+  switch:
+    cmd: python -m src.deploy.switcher
+    deps:
+    - path: data/scorecards/latest.parquet
+      hash: md5
+      md5: 4c4f774bf5f6a4f132952477d4e54c4b
+      size: 4032
+    - path: src/deploy
+      hash: md5
+      md5: a0c23d6a1e89781873f3841645089663.dir
+      size: 20435
+      nfiles: 4

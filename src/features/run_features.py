@@ -1,3 +1,4 @@
+# src/features/run_features.py
 from __future__ import annotations
 
 import argparse
@@ -21,6 +22,41 @@ def _read_input(path: Path) -> pd.DataFrame:
     if path.suffix.lower() == ".csv":
         return pd.read_csv(path)
     raise ValueError(f"Unsupported input format: {path.suffix} (use .csv or .parquet)")
+
+
+def _to_xy_wide(feats: pd.DataFrame, *, symbols: tuple[str, str]) -> pd.DataFrame:
+    """
+    Convert long per-symbol features into a wide *_x/*_y feature table keyed by timestamp.
+    Output columns:
+      timestamp, close_x, log_return_1_x, sma_10_x, close_y, log_return_1_y, sma_10_y
+    """
+    s1, s2 = symbols
+
+    needed = {"timestamp", "symbol", "close", "log_return_1", "sma_10"}
+    missing = [c for c in needed if c not in feats.columns]
+    if missing:
+        raise ValueError(f"Cannot build *_x/*_y features, missing columns: {missing}")
+
+    a = feats[feats["symbol"] == s1].drop(columns=["symbol"])
+    b = feats[feats["symbol"] == s2].drop(columns=["symbol"])
+
+    wide = a.merge(b, on="timestamp", how="inner", suffixes=("_x", "_y"))
+
+    # Enforce the exact column order your models expect
+    ordered = [
+        "timestamp",
+        "close_x",
+        "log_return_1_x",
+        "sma_10_x",
+        "close_y",
+        "log_return_1_y",
+        "sma_10_y",
+    ]
+    missing2 = [c for c in ordered if c not in wide.columns]
+    if missing2:
+        raise ValueError(f"Wide merge did not produce expected columns: {missing2}, cols={list(wide.columns)}")
+
+    return wide[ordered].sort_values("timestamp").reset_index(drop=True)
 
 
 def _normalize_bars_columns(df: pd.DataFrame, *, symbol: str) -> pd.DataFrame:
@@ -79,6 +115,11 @@ def run(
     bars = _normalize_bars_columns(bars, symbol=symbol)
 
     feats = build_features(bars)
+    
+    # If we have at least two symbols, convert to wide *_x/*_y format for pretrained experts
+    unique_syms = list(pd.Series(feats["symbol"]).dropna().unique())
+    if len(unique_syms) >= 2:
+        feats = _to_xy_wide(feats, symbols=(str(unique_syms[0]), str(unique_syms[1])))
 
     parquet_path = features_dir / f"{timestamp}.parquet"
     feats.to_parquet(parquet_path, index=False)
