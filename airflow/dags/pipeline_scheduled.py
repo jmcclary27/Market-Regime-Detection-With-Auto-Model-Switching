@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 
-
 DEFAULT_ARGS = {
     "owner": "airflow",
     "retries": 3,
