@@ -116,7 +116,9 @@ def rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def evaluate(model: Any, df: pd.DataFrame, feature_cols: list[str], target_col: str) -> SplitMetrics:
+def evaluate(
+    model: Any, df: pd.DataFrame, feature_cols: list[str], target_col: str
+) -> SplitMetrics:
     X = df[feature_cols].to_numpy()
     y = df[target_col].to_numpy()
     pred = model.predict(X)
@@ -151,9 +153,7 @@ def run(cfg: TrainConfig) -> Path:
     # Features-only numeric columns
     exclude = {cfg.timestamp_col, "symbol", cfg.target_col}
     feature_cols = [
-        c
-        for c in feats.columns
-        if c not in exclude and pd.api.types.is_numeric_dtype(feats[c])
+        c for c in feats.columns if c not in exclude and pd.api.types.is_numeric_dtype(feats[c])
     ]
     if not feature_cols:
         raise ValueError(f"No numeric feature columns found. cols={list(feats.columns)}")
@@ -241,7 +241,9 @@ def run(cfg: TrainConfig) -> Path:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s, %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s, %(message)s"
+    )
 
     p = argparse.ArgumentParser()
     p.add_argument("--features-path", default=str(Config.features_path))
