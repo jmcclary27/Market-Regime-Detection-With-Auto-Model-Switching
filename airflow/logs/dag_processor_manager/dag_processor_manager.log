@@ -49526,3 +49526,21 @@ File Path                                PID    Runtime      # DAGs    # Errors 
 /opt/airflow/dags/pipeline_scheduled.py                           1           0  0.14s           2026-01-22T17:24:32
 /opt/airflow/dags/pipeline_one_off.py                             1           0  0.14s           2026-01-22T17:24:32
 ================================================================================
+[2026-01-22T17:25:24.812+0000] {manager.py:878} INFO - 
+================================================================================
+DAG File Processing Stats
+
+File Path                                PID    Runtime      # DAGs    # Errors  Last Runtime    Last Run
+---------------------------------------  -----  ---------  --------  ----------  --------------  -------------------
+/opt/airflow/dags/pipeline_scheduled.py                           1           0  0.17s           2026-01-22T17:25:02
+/opt/airflow/dags/pipeline_one_off.py                             1           0  0.16s           2026-01-22T17:25:02
+================================================================================
+[2026-01-22T17:25:55.189+0000] {manager.py:878} INFO - 
+================================================================================
+DAG File Processing Stats
+
+File Path                                PID    Runtime      # DAGs    # Errors  Last Runtime    Last Run
+---------------------------------------  -----  ---------  --------  ----------  --------------  -------------------
+/opt/airflow/dags/pipeline_scheduled.py                           1           0  0.16s           2026-01-22T17:25:33
+/opt/airflow/dags/pipeline_one_off.py                             1           0  0.15s           2026-01-22T17:25:33
+================================================================================
