@@ -1,0 +1,36 @@
+[2026-01-21T13:00:00.980+0000] {local_task_job_runner.py:120} INFO - ::group::Pre task execution logs
+[2026-01-21T13:00:01.055+0000] {taskinstance.py:2076} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: pipeline_scheduled.poll scheduled__2026-01-21T12:00:00+00:00 [queued]>
+[2026-01-21T13:00:01.067+0000] {taskinstance.py:2076} INFO - Dependencies all met for dep_context=requeueable deps ti=<TaskInstance: pipeline_scheduled.poll scheduled__2026-01-21T12:00:00+00:00 [queued]>
+[2026-01-21T13:00:01.070+0000] {taskinstance.py:2306} INFO - Starting attempt 1 of 4
+[2026-01-21T13:00:01.098+0000] {taskinstance.py:2330} INFO - Executing <Task(BashOperator): poll> on 2026-01-21 12:00:00+00:00
+[2026-01-21T13:00:01.113+0000] {standard_task_runner.py:64} INFO - Started process 42573 to run task
+[2026-01-21T13:00:01.120+0000] {standard_task_runner.py:90} INFO - Running: ['***', 'tasks', 'run', 'pipeline_scheduled', 'poll', 'scheduled__2026-01-21T12:00:00+00:00', '--job-id', '206', '--raw', '--subdir', 'DAGS_FOLDER/pipeline_scheduled.py', '--cfg-path', '/tmp/tmpz06ctrck']
+[2026-01-21T13:00:01.126+0000] {standard_task_runner.py:91} INFO - Job 206: Subtask poll
+[2026-01-21T13:00:01.255+0000] {task_command.py:426} INFO - Running <TaskInstance: pipeline_scheduled.poll scheduled__2026-01-21T12:00:00+00:00 [running]> on host 64fb536b9c49
+[2026-01-21T13:00:01.490+0000] {taskinstance.py:2648} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='***' AIRFLOW_CTX_DAG_ID='pipeline_scheduled' AIRFLOW_CTX_TASK_ID='poll' AIRFLOW_CTX_EXECUTION_DATE='2026-01-21T12:00:00+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='scheduled__2026-01-21T12:00:00+00:00'
+[2026-01-21T13:00:01.492+0000] {taskinstance.py:430} INFO - ::endgroup::
+[2026-01-21T13:00:01.528+0000] {subprocess.py:63} INFO - Tmp dir root location: /tmp
+[2026-01-21T13:00:01.532+0000] {subprocess.py:75} INFO - Running command: ['/usr/bin/bash', '-c', 'cd /opt/project && python -m src.poll.run --run-ts "20260121_130000Z"']
+[2026-01-21T13:00:01.564+0000] {subprocess.py:86} INFO - Output:
+[2026-01-21T13:00:01.744+0000] {subprocess.py:93} INFO - /home/***/.local/bin/python: Error while finding module specification for 'src.poll.run' (ModuleNotFoundError: No module named 'src.poll')
+[2026-01-21T13:00:01.756+0000] {subprocess.py:97} INFO - Command exited with return code 1
+[2026-01-21T13:00:01.758+0000] {taskinstance.py:441} INFO - ::group::Post task execution logs
+[2026-01-21T13:00:01.783+0000] {taskinstance.py:2905} ERROR - Task failed with exception
+Traceback (most recent call last):
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/models/taskinstance.py", line 465, in _execute_task
+    result = _execute_callable(context=context, **execute_callable_kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/models/taskinstance.py", line 432, in _execute_callable
+    return execute_callable(context=context, **execute_callable_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/models/baseoperator.py", line 401, in wrapper
+    return func(self, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/airflow/.local/lib/python3.11/site-packages/airflow/operators/bash.py", line 243, in execute
+    raise AirflowException(
+airflow.exceptions.AirflowException: Bash command failed. The command returned a non-zero exit code 1.
+[2026-01-21T13:00:01.794+0000] {taskinstance.py:1206} INFO - Marking task as UP_FOR_RETRY. dag_id=pipeline_scheduled, task_id=poll, run_id=scheduled__2026-01-21T12:00:00+00:00, execution_date=20260121T120000, start_date=20260121T130001, end_date=20260121T130001
+[2026-01-21T13:00:01.814+0000] {standard_task_runner.py:110} ERROR - Failed to execute job 206 for task poll (Bash command failed. The command returned a non-zero exit code 1.; 42573)
+[2026-01-21T13:00:01.858+0000] {local_task_job_runner.py:243} INFO - Task exited with return code 1
+[2026-01-21T13:00:01.900+0000] {taskinstance.py:3503} INFO - 0 downstream tasks scheduled from follow-on schedule check
+[2026-01-21T13:00:01.905+0000] {local_task_job_runner.py:222} INFO - ::endgroup::
