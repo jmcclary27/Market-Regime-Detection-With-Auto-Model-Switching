@@ -70,3 +70,10 @@ mlflow.db-journal
 # Temporary / scratch
 ############################
 runs/
+
+############################
+# Airflow runtime artifacts
+############################
+airflow/logs/
+airflow/airflow.db
+airflow/webserver_config.py
