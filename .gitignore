@@ -77,3 +77,8 @@ runs/
 airflow/logs/
 airflow/airflow.db
 airflow/webserver_config.py
+
+############################
+# Model Planning
+############################
+model_future.txt
