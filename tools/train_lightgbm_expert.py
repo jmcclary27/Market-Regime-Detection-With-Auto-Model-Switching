@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import mlflow
 import mlflow.lightgbm  # important: avoid scoping bugs
@@ -21,19 +21,19 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 class TrainConfig:
     features_path: str
     target_col: str
-    target_expr: Optional[str]
+    target_expr: str | None
     target_shift: int
-    group_col: Optional[str]
-    vol_window: Optional[int]
+    group_col: str | None
+    vol_window: int | None
 
     model_name: str
     experiment_name: str
     run_name: str
     output_dir: str
 
-    id_cols: List[str]
-    drop_cols: List[str]
-    time_col: Optional[str]
+    id_cols: list[str]
+    drop_cols: list[str]
+    time_col: str | None
 
     train_frac: float
     val_frac: float
@@ -43,8 +43,8 @@ class TrainConfig:
     num_boost_round: int
     seed: int
 
-    params_json: Optional[str]
-    mlflow_tracking_uri: Optional[str]
+    params_json: str | None
+    mlflow_tracking_uri: str | None
 
 
 def _parse_args() -> TrainConfig:
@@ -151,7 +151,7 @@ def _parse_args() -> TrainConfig:
     )
 
 
-def _load_params(params_json: Optional[str]) -> Dict[str, Any]:
+def _load_params(params_json: str | None) -> dict[str, Any]:
     if not params_json:
         return {}
 
@@ -180,7 +180,7 @@ def _safe_to_datetime(s: pd.Series) -> pd.Series:
 
 def _time_ordered_split(
     df: pd.DataFrame, train_frac: float, val_frac: float, test_frac: float
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     total = train_frac + val_frac + test_frac
     if not np.isclose(total, 1.0):
         raise ValueError(f"train, val, test fractions must sum to 1.0, got {total}")
@@ -200,8 +200,8 @@ def _time_ordered_split(
 
 
 def _make_xy(
-    df: pd.DataFrame, target_col: str, exclude_cols: List[str]
-) -> Tuple[pd.DataFrame, pd.Series]:
+    df: pd.DataFrame, target_col: str, exclude_cols: list[str]
+) -> tuple[pd.DataFrame, pd.Series]:
     if target_col not in df.columns:
         raise KeyError(f"target col not found: {target_col}")
 
@@ -221,7 +221,7 @@ def _make_xy(
     return X, y
 
 
-def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
+def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
     mse = mean_squared_error(y_true, y_pred)
     rmse = float(np.sqrt(mse))
     mae = mean_absolute_error(y_true, y_pred)
@@ -335,7 +335,7 @@ def main() -> None:
     user_params = _load_params(cfg.params_json)
 
     # Sensible defaults for tabular finance features
-    params: Dict[str, Any] = {
+    params: dict[str, Any] = {
         "n_estimators": cfg.num_boost_round,
         "learning_rate": 0.03,
         "num_leaves": 63,
