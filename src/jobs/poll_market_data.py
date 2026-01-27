@@ -1,6 +1,7 @@
 # src/jobs/poll_market_data.py
 from __future__ import annotations
 
+import argparse
 import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -29,16 +30,24 @@ def _utc_ts() -> str:
 
 
 def main() -> None:
+    p = argparse.ArgumentParser(description="Poll market data to data/raw")
+    p.add_argument("--start-date", default="2010-01-01")
+    p.add_argument("--end-date", default=datetime.now(UTC).date().isoformat())
+    p.add_argument("--symbols", default=None, help="Comma-separated, default uses cfg market.symbols[:2]")
+    args = p.parse_args()
+
     cfg = load_config()
 
-    symbols = list(cfg["market"]["symbols"][:2])
-    if len(symbols) < 2:
-        raise ValueError(
-            "Need at least 2 symbols in cfg['market']['symbols'] for *_x/*_y features."
-        )
+    if args.symbols:
+        symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    else:
+        symbols = list(cfg["market"]["symbols"][:2])
 
-    start_date = "2020-01-01"
-    end_date = "2020-03-01"
+    if len(symbols) < 2:
+        raise ValueError("Need at least 2 symbols for *_x/*_y features.")
+
+    start_date = args.start_date
+    end_date = args.end_date
 
     raw_dir = Path(cfg["data"]["raw_path"])
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -51,11 +60,8 @@ def main() -> None:
     frames: list[pd.DataFrame] = []
     for sym in symbols:
         df = fetch_market_data(sym, start_date, end_date).copy()
-
-        # Ensure symbol column exists, even if fetch_market_data returns only an index + OHLCV
         if "symbol" not in df.columns:
             df["symbol"] = sym
-
         frames.append(df)
 
     bars = pd.concat(frames, axis=0, ignore_index=False)
