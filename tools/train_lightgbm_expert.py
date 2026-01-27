@@ -191,9 +191,7 @@ def _time_ordered_split(
     n_test = n - n_train - n_val
 
     if n_train <= 0 or n_val <= 0 or n_test <= 0:
-        raise ValueError(
-            f"split too small, n={n}, train={n_train}, val={n_val}, test={n_test}"
-        )
+        raise ValueError(f"split too small, n={n}, train={n_train}, val={n_val}, test={n_test}")
 
     train_df = df.iloc[:n_train].copy()
     val_df = df.iloc[n_train : n_train + n_val].copy()
@@ -208,7 +206,9 @@ def _make_xy(
         raise KeyError(f"target col not found: {target_col}")
 
     y = df[target_col]
-    X = df.drop(columns=[target_col] + [c for c in exclude_cols if c in df.columns], errors="ignore")
+    X = df.drop(
+        columns=[target_col] + [c for c in exclude_cols if c in df.columns], errors="ignore"
+    )
 
     # Keep numeric columns only (simple + robust)
     X = X.select_dtypes(include=[np.number]).copy()
@@ -280,8 +280,8 @@ def _build_target(df: pd.DataFrame, cfg: TrainConfig) -> pd.DataFrame:
     # Step 3: shift target to next period if requested
     if cfg.target_shift != 0:
         if cfg.group_col:
-            out[cfg.target_col] = (
-                out.groupby(cfg.group_col, sort=False)[cfg.target_col].shift(cfg.target_shift)
+            out[cfg.target_col] = out.groupby(cfg.group_col, sort=False)[cfg.target_col].shift(
+                cfg.target_shift
             )
         else:
             out[cfg.target_col] = out[cfg.target_col].shift(cfg.target_shift)

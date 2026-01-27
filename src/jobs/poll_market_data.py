@@ -1,4 +1,3 @@
-# src/jobs/poll_market_data.py
 from __future__ import annotations
 
 import argparse
@@ -6,6 +5,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Sequence
 
 import pandas as pd
 
@@ -29,12 +29,14 @@ def _utc_ts() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     p = argparse.ArgumentParser(description="Poll market data to data/raw")
     p.add_argument("--start-date", default="2010-01-01")
     p.add_argument("--end-date", default=datetime.now(UTC).date().isoformat())
-    p.add_argument("--symbols", default=None, help="Comma-separated, default uses cfg market.symbols[:2]")
-    args = p.parse_args()
+    p.add_argument(
+        "--symbols", default=None, help="Comma-separated, default uses cfg market.symbols[:2]"
+    )
+    args = p.parse_args(list(argv) if argv is not None else None)
 
     cfg = load_config()
 
@@ -44,7 +46,9 @@ def main() -> None:
         symbols = list(cfg["market"]["symbols"][:2])
 
     if len(symbols) < 2:
-        raise ValueError("Need at least 2 symbols for *_x/*_y features.")
+        raise ValueError(
+            "Need at least 2 symbols in cfg['market']['symbols'] for *_x/*_y features."
+        )
 
     start_date = args.start_date
     end_date = args.end_date
