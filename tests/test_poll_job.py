@@ -9,7 +9,7 @@ def test_poll_job_writes_files(tmp_path: Path, monkeypatch) -> None:
     # Run inside temp dir so we don't touch the real repo
     monkeypatch.chdir(tmp_path)
 
-    main()
+    main([])
 
     # Assert raw output exists
     raw_dir = Path("data") / "raw"
