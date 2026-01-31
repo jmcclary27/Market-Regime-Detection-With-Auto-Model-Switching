@@ -149,11 +149,11 @@ def _make_numeric_X(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str
     converted: list[str] = []
     dropped: list[str] = []
 
-    # Convert datetime64 columns to int64
-    for col in list(X.columns):
-        if pd.api.types.is_datetime64_any_dtype(X[col]):
-            X[col] = X[col].astype("int64")
-            converted.append(col)
+    # Drop datetime64 columns, treat them as identifiers, not features
+    dt_cols = [c for c in X.columns if pd.api.types.is_datetime64_any_dtype(X[c])]
+    if dt_cols:
+        X = X.drop(columns=dt_cols)
+        dropped.extend(dt_cols)
 
     # Drop anything still non-numeric (object, string, mixed)
     non_numeric = [
@@ -173,26 +173,31 @@ def _make_numeric_X(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str
     return X, converted, dropped
 
 
-def _safe_pred_value(v: Any) -> Any:
-    # Keep datetimes as ISO strings if they ever appear
-    if isinstance(v, pd.Timestamp):
-        return v.isoformat()
+def _safe_pred_value(v: Any) -> float:
+    import numpy as np
+    import pandas as pd
 
-    # numpy scalars -> python scalars
-    try:
-        if hasattr(v, "item"):
+    # unwrap numpy scalars
+    if hasattr(v, "item"):
+        try:
             v = v.item()
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # normal numeric predictions
-    try:
-        return float(v)
-    except Exception:
-        pass
+    # reject datetime-like predictions
+    if isinstance(v, pd.Timestamp | np.datetime64):
+        raise ValueError(f"prediction is datetime-like, refusing: {v!r}")
 
-    # fallback
-    return str(v)
+    f = float(v)
+
+    if not np.isfinite(f):
+        raise ValueError(f"prediction is not finite: {f!r}")
+
+    # tripwire for timestamp leaks, and other blowups
+    if abs(f) > 1e6:
+        raise ValueError(f"prediction magnitude insane, likely timestamp leak: {f!r}")
+
+    return f
 
 
 def _drop_nan_rows(X: pd.DataFrame, row_ids: pd.Index) -> tuple[pd.DataFrame, pd.Index]:
@@ -222,7 +227,7 @@ def run(config: BatchPredictConfig) -> Path:
     df = pd.read_parquet(config.features_path)
 
     # Build X by dropping target if present
-    X_raw = df.drop(columns=[config.target_col], errors="ignore").copy()
+    X_raw = df.drop(columns=[config.target_col, "timestamp"], errors="ignore").copy()
 
     # If index is not integer-like, reset so row_id is stable ints
     if not pd.api.types.is_integer_dtype(X_raw.index):
