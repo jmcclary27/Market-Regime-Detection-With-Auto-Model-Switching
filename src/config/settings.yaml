@@ -9,7 +9,9 @@ data:
   regimes_path: data/regimes
 
 regimes:
-  method: rules 
+  method: hmm
+  hmm:
+    artifacts_dir: models/regimes/hmm
 
 logging:
   level: INFO

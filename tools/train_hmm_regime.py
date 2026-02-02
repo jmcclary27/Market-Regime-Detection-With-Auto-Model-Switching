@@ -47,7 +47,7 @@ def _parse_args() -> TrainHMMConfig:
     p.add_argument("--seed", type=int, default=42)
 
     p.add_argument("--time-col", default="timestamp", help="Time column for ordering.")
-    p.add_argument("--output-dir", default="artifacts/regimes_hmm", help="Local output folder.")
+    p.add_argument("--output-dir", default="models/regimes/hmm", help="Local output folder.")
     p.add_argument("--run-name", default="", help="Optional run name. Defaults to timestamp.")
 
     args = p.parse_args()

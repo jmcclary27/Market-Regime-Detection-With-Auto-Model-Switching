@@ -1,0 +1,48 @@
+{
+  "run_name": "hmm_20260202_002307",
+  "trained_at_utc": "2026-02-02T00:23:10Z",
+  "features_path": "data/features/historical_spy_qqq_2010_2026.parquet",
+  "obs_mode": "minimal",
+  "obs_cols": [
+    "ret_x",
+    "ret_y",
+    "spread_ret"
+  ],
+  "n_states": 3,
+  "covariance_type": "full",
+  "seed": 42,
+  "n_rows_total": 4040,
+  "n_rows_train": 4039,
+  "dropped_rows_due_to_nans": 1,
+  "per_state_stats": [
+    {
+      "_state": 0,
+      "n": 59,
+      "mean_ret_x": -0.02875833713962224,
+      "mean_ret_y": -0.027046831233714527,
+      "mean_spread": -0.0017115059059077096,
+      "std_spread": 0.01193269956889252
+    },
+    {
+      "_state": 1,
+      "n": 20,
+      "mean_ret_x": 0.05419275960711968,
+      "mean_ret_y": 0.04763634903883085,
+      "mean_spread": 0.006556410568288831,
+      "std_spread": 0.00923217721788313
+    },
+    {
+      "_state": 2,
+      "n": 3960,
+      "mean_ret_x": 0.0008115261999611181,
+      "mean_ret_y": 0.0006195384883329997,
+      "mean_spread": 0.00019198771162811846,
+      "std_spread": 0.004666488205974191
+    }
+  ],
+  "state_mapping": {
+    "0": "bearish",
+    "1": "bullish",
+    "2": "sideways"
+  }
+}
