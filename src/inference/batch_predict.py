@@ -17,7 +17,7 @@ from src.registry.registry import ACTIVE_FILE, RegistryError, load_active_model
 
 @dataclass
 class BatchPredictConfig:
-    features_path: Path = Path("data/features/latest.parquet")
+    features_path: Path = Path("data/regimes/latest.parquet")
     models_dir: Path = Path("models")
     output_dir: Path = Path("data/predictions")
     runs_dir: Path = Path("data/runs")

@@ -70,17 +70,40 @@ def _require_columns(df: pd.DataFrame, cols: list[str]) -> None:
         raise ValueError(f"Missing required columns: {missing}. Available: {sorted(df.columns)}")
 
 
-def _build_observations_minimal(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    needed = ["log_return_1_x", "log_return_1_y"]
-    _require_columns(df, needed)
+def _build_observations(df: pd.DataFrame, mode: str) -> tuple[pd.DataFrame, list[str]]:
+    if mode == "minimal":
+        needed = ["log_return_1_x", "log_return_1_y"]
+        _require_columns(df, needed)
 
-    obs = pd.DataFrame(index=df.index)
-    obs["ret_x"] = pd.to_numeric(df["log_return_1_x"], errors="coerce")
-    obs["ret_y"] = pd.to_numeric(df["log_return_1_y"], errors="coerce")
-    obs["spread_ret"] = obs["ret_x"] - obs["ret_y"]
+        obs = pd.DataFrame(index=df.index)
+        obs["ret_x"] = pd.to_numeric(df["log_return_1_x"], errors="coerce")
+        obs["ret_y"] = pd.to_numeric(df["log_return_1_y"], errors="coerce")
+        obs["spread_ret"] = obs["ret_x"] - obs["ret_y"]
 
-    cols = ["ret_x", "ret_y", "spread_ret"]
-    return obs[cols], cols
+        cols = ["ret_x", "ret_y", "spread_ret"]
+        return obs[cols], cols
+
+    if mode == "rich":
+        needed = ["log_return_1_x", "log_return_1_y", "close_x", "sma_10_x", "close_y", "sma_10_y"]
+        _require_columns(df, needed)
+
+        obs = pd.DataFrame(index=df.index)
+        obs["ret_x"] = pd.to_numeric(df["log_return_1_x"], errors="coerce")
+        obs["ret_y"] = pd.to_numeric(df["log_return_1_y"], errors="coerce")
+        obs["spread_ret"] = obs["ret_x"] - obs["ret_y"]
+
+        close_x = pd.to_numeric(df["close_x"], errors="coerce")
+        sma_x = pd.to_numeric(df["sma_10_x"], errors="coerce")
+        close_y = pd.to_numeric(df["close_y"], errors="coerce")
+        sma_y = pd.to_numeric(df["sma_10_y"], errors="coerce")
+
+        obs["trend_x"] = (close_x / sma_x) - 1.0
+        obs["trend_y"] = (close_y / sma_y) - 1.0
+
+        cols = ["ret_x", "ret_y", "spread_ret", "trend_x", "trend_y"]
+        return obs[cols], cols
+
+    raise ValueError(f"Unsupported obs_mode: {mode}")
 
 
 def label_regimes_hmm(df: pd.DataFrame, *, cfg: dict[str, Any]) -> pd.DataFrame:
@@ -96,10 +119,7 @@ def label_regimes_hmm(df: pd.DataFrame, *, cfg: dict[str, Any]) -> pd.DataFrame:
     art = _load_artifacts(artifacts_root)
 
     obs_mode = str(art.metadata.get("obs_mode", "minimal")).lower()
-    if obs_mode != "minimal":
-        raise ValueError(f"Unsupported obs_mode in metadata: {obs_mode}")
-
-    obs_df, obs_cols = _build_observations_minimal(df)
+    obs_df, obs_cols = _build_observations(df, obs_mode)
 
     meta_cols = art.metadata.get("obs_cols")
     if isinstance(meta_cols, list) and [str(c) for c in meta_cols] != obs_cols:
