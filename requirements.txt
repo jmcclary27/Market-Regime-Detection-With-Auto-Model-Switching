@@ -5,6 +5,8 @@ pyarrow
 pyyaml
 scikit-learn
 types-PyYAML
+hmmlearn
+joblib
 
 # Market Dependencies
 yfinance

@@ -8,5 +8,8 @@ data:
   features_path: data/features
   regimes_path: data/regimes
 
+regimes:
+  method: rules 
+
 logging:
   level: INFO

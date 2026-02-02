@@ -1,4 +1,3 @@
-# src/regimes/run_regime_detection.py
 from __future__ import annotations
 
 import argparse
@@ -7,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.config.load_config import load_config
-from src.regimes.rules import label_regimes
+from src.regimes import rules
 
 
 def run(
@@ -40,7 +39,20 @@ def run(
 
     df = pd.read_parquet(input_path)
 
-    labels = label_regimes(df)
+    reg_cfg = cfg.get("regimes", {})
+    method = str(reg_cfg.get("method", "rules")).lower()
+
+    if method == "rules":
+        labels = rules.label_regimes(df)
+    elif method == "hmm":
+        # Implement in a later step:
+        # - src/regimes/hmm.py with label_regimes_hmm(df, cfg)
+        from src.regimes.hmm import label_regimes_hmm  # type: ignore
+
+        labels = label_regimes_hmm(df, cfg=cfg)
+    else:
+        raise ValueError(f"Unknown regimes.method: {method}")
+
     out = df.join(labels)
 
     regimes_path = regimes_dir / f"{timestamp}.parquet"
@@ -54,7 +66,7 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(description="Run rule-based regime detection and write parquet.")
+    p = argparse.ArgumentParser(description="Run regime detection and write parquet.")
     p.add_argument("--input", required=True, help="Path to features parquet (.parquet)")
     p.add_argument("--timestamp", required=True, help="Timestamp slug, e.g. 20260112_150402Z")
     p.add_argument("--config", default="src/config/settings.yaml", help="Path to settings yaml")
