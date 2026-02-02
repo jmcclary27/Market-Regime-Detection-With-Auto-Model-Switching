@@ -53,7 +53,6 @@ EVENT_COLUMNS = [
     "reason",
 ]
 
-
 # ---------- Helpers ----------
 
 
@@ -101,6 +100,61 @@ def infer_model_id_col(df: pd.DataFrame | None) -> str | None:
         if c in df.columns:
             return c
     return None
+
+
+def choose_pretrained_candidate_for_regime(
+    *,
+    project_root: Path,
+    data_dir: Path,
+    regime: str,
+    metric_name: str,
+) -> str | None:
+    """
+    Choose best pretrained model for a given regime from models/pretrained.
+
+    Convention:
+      models/pretrained/{regime}__*.joblib
+
+    Selection:
+      1) If scorecard has metrics for multiple candidates, pick the lowest metric (lower is better).
+      2) Otherwise, pick the newest artifact by mtime.
+
+    Returns:
+      model_id string (which must match scorecard model_id/model_name and registry model_id usage)
+      This is the filename stem (without .joblib), same as batch_predict.discover_models() uses.
+    """
+    pretrained_dir = project_root / "models" / "pretrained"
+    if not pretrained_dir.exists():
+        return None
+
+    candidates = sorted(pretrained_dir.glob(f"{regime}__*.joblib"))
+    if not candidates:
+        return None
+
+    # Candidate ids are filename stems, because discover_models() uses model_path.stem
+    candidate_ids = [p.stem for p in candidates]
+
+    # Try scorecard-based selection (best metric)
+    scorecards_dir = data_dir / "scorecards"
+    scorecard = load_latest_scorecard(scorecards_dir)
+    if scorecard is not None:
+        best_id: str | None = None
+        best_val: float | None = None
+
+        for cid in candidate_ids:
+            val = extract_metric(scorecard, model_id=cid, metric_name=metric_name)
+            if val is None:
+                continue
+            if best_val is None or val < best_val:
+                best_val = val
+                best_id = cid
+
+        if best_id is not None:
+            return best_id
+
+    # Fallback: newest file
+    newest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return newest.stem
 
 
 def load_latest_scorecard(scorecards_dir: Path) -> pd.DataFrame | None:
@@ -183,6 +237,42 @@ def decide(
     return "hold", "within_margins"
 
 
+def load_latest_regime(regimes_path: Path) -> str | None:
+    """
+    Load the most recent regime label from data/regimes/latest.parquet.
+
+    Returns:
+      - "bullish" | "bearish" | "sideways" | "unknown" | None
+    """
+    if not regimes_path.exists():
+        return None
+
+    df = pd.read_parquet(regimes_path, columns=["timestamp", "regime"])
+    if df.empty or "regime" not in df.columns:
+        return None
+
+    last = df.iloc[-1]["regime"]
+    if pd.isna(last):
+        return None
+
+    return str(last)
+
+
+def regime_to_candidate_model_id(regime: str) -> str | None:
+    """
+    Map a regime label to the intended expert model id.
+
+    This assumes your expert ids follow discover_models() convention:
+      models/experts/<regime>/latest.joblib  -> model_name "expert_<regime>"
+    """
+    mapping = {
+        "bullish": "expert_bullish",
+        "bearish": "expert_bearish",
+        "sideways": "expert_sideways",
+    }
+    return mapping.get(regime)
+
+
 # ---------- Switcher ----------
 
 
@@ -191,10 +281,11 @@ def run_switcher(
     data_dir: Path,
     config: SwitchConfig,
     active_model_id: str = "baseline",
-    candidate_model_id: str = "expert_bullish",
 ) -> None:
     """
     Step 3 behavior:
+    - Load latest regime label from data/regimes/latest.parquet
+    - Map regime -> candidate expert model id
     - Load latest scorecard
     - Extract active vs candidate metric (overall)
     - Decide: promote / rollback / hold
@@ -203,6 +294,41 @@ def run_switcher(
     """
     events_path = data_dir / "deployments" / "events.parquet"
     scorecards_dir = data_dir / "scorecards"
+
+    regimes_path = data_dir / "regimes" / "latest.parquet"
+    latest_regime = load_latest_regime(regimes_path)
+
+    candidate_model_id: str | None = None
+    if latest_regime is not None and latest_regime != "unknown":
+        project_root = data_dir.parent
+        candidate_model_id = choose_pretrained_candidate_for_regime(
+            project_root=project_root,
+            data_dir=data_dir,
+            regime=latest_regime,
+            metric_name=config.metric_name,
+        )
+
+    # If we cannot choose a candidate, hold
+    if candidate_model_id is None:
+        append_event(
+            events_path,
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "event_type": "canary_evaluated",
+                "active_model_id_before": active_model_id,
+                "candidate_model_id": None,
+                "active_model_id_after": active_model_id,
+                "window_type": config.window_type,
+                "window_value": config.window_value,
+                "n": None,
+                "metric_name": config.metric_name,
+                "active_metric_value": None,
+                "candidate_metric_value": None,
+                "decision": "hold",
+                "reason": f"no_candidate_for_regime={latest_regime}",
+            },
+        )
+        return
 
     scorecard = load_latest_scorecard(scorecards_dir)
 
@@ -277,7 +403,7 @@ def run_switcher(
                 "active_metric_value": active_metric,
                 "candidate_metric_value": candidate_metric,
                 "decision": "no_action",
-                "reason": "metrics_missing_for_model_id_or_metric",
+                "reason": f"metrics_missing_for_model_id_or_metric regime={latest_regime}",
             },
         )
         return
@@ -321,7 +447,7 @@ def run_switcher(
             "active_metric_value": active_metric,
             "candidate_metric_value": candidate_metric,
             "decision": decision,
-            "reason": reason,
+            "reason": f"{reason} regime={latest_regime}",
         },
     )
 
@@ -339,7 +465,6 @@ def main() -> None:
         data_dir=Path("data"),
         config=config,
         active_model_id="baseline",
-        candidate_model_id="expert_bullish",
     )
 
 
