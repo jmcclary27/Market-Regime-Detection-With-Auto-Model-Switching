@@ -19,15 +19,16 @@ class HMMArtifacts:
 
 
 def _default_artifacts_dir(cfg: dict[str, Any]) -> Path:
-    """
-    Resolve where HMM artifacts live.
-
-    Priority:
-      1) cfg["regimes"]["hmm"]["artifacts_dir"]
-      2) "models/regimes/hmm"
-    """
+    # Priority:
+    # 1) cfg["regimes"]["hmm"]["artifacts_dir"]
+    # 2) models/regimes/hmm
     reg_cfg = cfg.get("regimes", {})
-    hmm_cfg = cast(dict[str, Any], reg_cfg.get("hmm", {})) if isinstance(reg_cfg, dict) else {}
+    hmm_cfg: dict[str, Any] = {}
+    if isinstance(reg_cfg, dict):
+        hmm_cfg_val = reg_cfg.get("hmm", {})
+        if isinstance(hmm_cfg_val, dict):
+            hmm_cfg = cast(dict[str, Any], hmm_cfg_val)
+
     p = hmm_cfg.get("artifacts_dir", "models/regimes/hmm")
     return Path(str(p))
 
@@ -36,15 +37,8 @@ def _load_json(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
-def _load_artifacts(artifacts_root: Path) -> HMMArtifacts:
-    """
-    Expects:
-      <root>/latest/model.joblib
-      <root>/latest/scaler.joblib
-      <root>/latest/state_mapping.json
-      <root>/latest/metadata.json
-    """
-    latest = artifacts_root / "latest"
+def _load_artifacts(root: Path) -> HMMArtifacts:
+    latest = root / "latest"
 
     model_path = latest / "model.joblib"
     scaler_path = latest / "scaler.joblib"
@@ -54,26 +48,20 @@ def _load_artifacts(artifacts_root: Path) -> HMMArtifacts:
     missing = [p for p in [model_path, scaler_path, mapping_path, meta_path] if not p.exists()]
     if missing:
         raise FileNotFoundError(
-            "Missing HMM artifact files: "
+            "Missing HMM artifacts: "
             + ", ".join(str(p.as_posix()) for p in missing)
-            + ". Train the HMM first."
+            + ". Did you run tools/train_hmm_regime.py?"
         )
 
     model = joblib.load(model_path)
     scaler = joblib.load(scaler_path)
 
     raw_mapping = _load_json(mapping_path)
-    # keys are strings in JSON, normalize to int -> str
     state_to_label = {int(k): str(v) for k, v in raw_mapping.items()}
 
     metadata = _load_json(meta_path)
 
-    return HMMArtifacts(
-        model=model,
-        scaler=scaler,
-        state_to_label=state_to_label,
-        metadata=metadata,
-    )
+    return HMMArtifacts(model=model, scaler=scaler, state_to_label=state_to_label, metadata=metadata)
 
 
 def _require_columns(df: pd.DataFrame, cols: list[str]) -> None:
@@ -83,12 +71,6 @@ def _require_columns(df: pd.DataFrame, cols: list[str]) -> None:
 
 
 def _build_observations_minimal(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    """
-    Must match the training observation construction.
-
-    Returns:
-      obs_df with columns: ret_x, ret_y, spread_ret
-    """
     needed = ["log_return_1_x", "log_return_1_y"]
     _require_columns(df, needed)
 
@@ -103,61 +85,47 @@ def _build_observations_minimal(df: pd.DataFrame) -> tuple[pd.DataFrame, list[st
 
 def label_regimes_hmm(df: pd.DataFrame, *, cfg: dict[str, Any]) -> pd.DataFrame:
     """
-    HMM-based regime labeling.
-
-    Contract:
-      returns a dataframe with:
-        - regime
-        - regime_explanation
+    Returns a dataframe with:
+      - regime
+      - regime_explanation
 
     NaN policy:
-      - if any observation is NaN for a row -> regime="unknown"
+      - any NaN in observation vector -> regime="unknown"
     """
     artifacts_root = _default_artifacts_dir(cfg)
     art = _load_artifacts(artifacts_root)
 
-    # Currently only minimal mode is implemented, but we still read it from metadata if present
     obs_mode = str(art.metadata.get("obs_mode", "minimal")).lower()
     if obs_mode != "minimal":
         raise ValueError(f"Unsupported obs_mode in metadata: {obs_mode}")
 
     obs_df, obs_cols = _build_observations_minimal(df)
 
-    # Enforce we are consistent with training metadata (helps catch accidental schema drift)
     meta_cols = art.metadata.get("obs_cols")
     if isinstance(meta_cols, list) and [str(c) for c in meta_cols] != obs_cols:
         raise ValueError(
-            f"Observation columns mismatch. metadata={meta_cols}, runtime={obs_cols}. "
-            "Retrain or fix observation builder."
+            f"Observation columns mismatch. metadata={meta_cols}, runtime={obs_cols}. Retrain HMM."
         )
 
-    valid_mask = obs_df.notna().all(axis=1)
-    n_valid = int(valid_mask.sum())
+    valid = obs_df.notna().all(axis=1)
 
     regimes = pd.Series(index=df.index, dtype="string")
     explanations = pd.Series(index=df.index, dtype="string")
 
-    # Default for invalid rows
-    regimes.loc[~valid_mask] = "unknown"
-    explanations.loc[~valid_mask] = "insufficient data for HMM observations"
+    regimes.loc[~valid] = "unknown"
+    explanations.loc[~valid] = "insufficient data for HMM observations"
 
-    if n_valid == 0:
+    if int(valid.sum()) == 0:
         return pd.DataFrame({"regime": regimes, "regime_explanation": explanations}, index=df.index)
 
-    X = obs_df.loc[valid_mask].to_numpy(dtype=np.float64)
+    X = obs_df.loc[valid].to_numpy(dtype=np.float64)
     Xz = art.scaler.transform(X)
 
-    # Hidden states -> labels
     states = art.model.predict(Xz)
+    labels: list[str] = [art.state_to_label.get(int(s), "unknown") for s in states]
+    regimes.loc[valid] = pd.Series(labels, index=obs_df.index[valid], dtype="string")
 
-    labels: list[str] = []
-    for s in states:
-        s_int = int(s)
-        labels.append(art.state_to_label.get(s_int, "unknown"))
-
-    regimes.loc[valid_mask] = pd.Series(labels, index=obs_df.index[valid_mask], dtype="string")
-
-    # Explanation: include state id + optional per-state mean spread from metadata
+    # Optional explanation enrichment using training metadata
     per_state_stats = art.metadata.get("per_state_stats", [])
     mean_spread_by_state: dict[int, float] = {}
     if isinstance(per_state_stats, list):
@@ -180,13 +148,6 @@ def label_regimes_hmm(df: pd.DataFrame, *, cfg: dict[str, Any]) -> pd.DataFrame:
         else:
             expl.append(f"hmm state={s_int}, mapped={lab}, train_mean_spread={ms:.6g}")
 
-    explanations.loc[valid_mask] = pd.Series(expl, index=obs_df.index[valid_mask], dtype="string")
+    explanations.loc[valid] = pd.Series(expl, index=obs_df.index[valid], dtype="string")
 
-    out = pd.DataFrame(
-        {
-            "regime": regimes,
-            "regime_explanation": explanations,
-        },
-        index=df.index,
-    )
-    return out
+    return pd.DataFrame({"regime": regimes, "regime_explanation": explanations}, index=df.index)
