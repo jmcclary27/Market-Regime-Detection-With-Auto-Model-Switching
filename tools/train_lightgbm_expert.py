@@ -84,7 +84,7 @@ def _parse_args() -> TrainConfig:
     p.add_argument("--model-name", default="lightgbm_expert", help="Logical name for this expert.")
     p.add_argument("--experiment-name", default="market-regime", help="MLflow experiment name.")
     p.add_argument("--run-name", default="", help="Optional MLflow run name.")
-    p.add_argument("--output-dir", default="artifacts/lightgbm", help="Local output folder.")
+    p.add_argument("--output-dir", default="models/experts/lightgbm", help="Local output folder.")
 
     p.add_argument(
         "--id-cols",

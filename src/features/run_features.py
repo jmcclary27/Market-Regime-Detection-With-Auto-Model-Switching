@@ -118,10 +118,14 @@ def run(
 
     feats = build_features(bars)
 
-    # If we have at least two symbols, convert to wide *_x/*_y format for pretrained experts
-    unique_syms = list(pd.Series(feats["symbol"]).dropna().unique())
-    if len(unique_syms) >= 2:
-        feats = _to_xy_wide(feats, symbols=(str(unique_syms[0]), str(unique_syms[1])))
+    # If we have the configured 2 symbols, convert to wide *_x/*_y format for pretrained experts
+    market_cfg = cfg.get("market", {})
+    syms = market_cfg.get("symbols", [])
+    if isinstance(syms, list) and len(syms) >= 2:
+        s1, s2 = str(syms[0]), str(syms[1])
+        present = set(pd.Series(feats["symbol"]).dropna().astype(str).unique())
+        if {s1, s2}.issubset(present):
+            feats = _to_xy_wide(feats, symbols=(s1, s2))
 
     parquet_path = features_dir / f"{timestamp}.parquet"
     feats.to_parquet(parquet_path, index=False)

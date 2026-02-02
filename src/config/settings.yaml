@@ -8,5 +8,10 @@ data:
   features_path: data/features
   regimes_path: data/regimes
 
+regimes:
+  method: hmm
+  hmm:
+    artifacts_dir: models/regimes/hmm
+
 logging:
   level: INFO
