@@ -118,10 +118,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
     def _predict() -> None:
         nonlocal predictions_parquet
-        if features_parquet is None:
-            raise RuntimeError("features_parquet not set")
-        # batch_predict currently scores from features parquet
-        predictions_parquet = predict_run(features_path=features_parquet)
+        if regimes_parquet is None:
+            raise RuntimeError("regimes_parquet not set")
+        predictions_parquet = predict_run(features_path=regimes_parquet)
 
     step("predict", _predict)
 
