@@ -281,6 +281,9 @@ def run_switcher(
     data_dir: Path,
     config: SwitchConfig,
     active_model_id: str = "baseline",
+    candidate_id: str | None = None,
+    # Backwards-compatible alias for tests / older call sites.
+    candidate_model_id: str | None = None,
 ) -> None:
     """
     Step 3 behavior:
@@ -291,6 +294,10 @@ def run_switcher(
     - Decide: promote / rollback / hold
     - Log deployment event
     - If promote and update_registry_on_promote=True, update registry/active_model.yaml
+
+    Notes:
+    - `candidate_model_id` is an alias of `candidate_id` for backwards compatibility.
+      If both are provided, `candidate_model_id` takes precedence.
     """
     events_path = data_dir / "deployments" / "events.parquet"
     scorecards_dir = data_dir / "scorecards"
@@ -298,18 +305,22 @@ def run_switcher(
     regimes_path = data_dir / "regimes" / "latest.parquet"
     latest_regime = load_latest_regime(regimes_path)
 
-    candidate_model_id: str | None = None
-    if latest_regime is not None and latest_regime != "unknown":
+    # Prefer the explicit alias if provided, else fall back to candidate_id.
+    resolved_candidate_id: str | None = (
+        candidate_model_id if candidate_model_id is not None else candidate_id
+    )
+
+    if resolved_candidate_id is None and latest_regime is not None and latest_regime != "unknown":
         project_root = data_dir.parent
-        candidate_model_id = choose_pretrained_candidate_for_regime(
+        resolved_candidate_id = choose_pretrained_candidate_for_regime(
             project_root=project_root,
             data_dir=data_dir,
             regime=latest_regime,
             metric_name=config.metric_name,
         )
 
-    # If we cannot choose a candidate, hold
-    if candidate_model_id is None:
+    # If we cannot choose a candidate, we still ran, but cannot act
+    if resolved_candidate_id is None:
         append_event(
             events_path,
             {
@@ -324,7 +335,7 @@ def run_switcher(
                 "metric_name": config.metric_name,
                 "active_metric_value": None,
                 "candidate_metric_value": None,
-                "decision": "hold",
+                "decision": "no_action",
                 "reason": f"no_candidate_for_regime={latest_regime}",
             },
         )
@@ -339,7 +350,7 @@ def run_switcher(
                 "ts": datetime.now(UTC).isoformat(),
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
-                "candidate_model_id": candidate_model_id,
+                "candidate_model_id": resolved_candidate_id,
                 "active_model_id_after": active_model_id,
                 "window_type": config.window_type,
                 "window_value": config.window_value,
@@ -361,7 +372,7 @@ def run_switcher(
                 "ts": datetime.now(UTC).isoformat(),
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
-                "candidate_model_id": candidate_model_id,
+                "candidate_model_id": resolved_candidate_id,
                 "active_model_id_after": active_model_id,
                 "window_type": config.window_type,
                 "window_value": config.window_value,
@@ -382,7 +393,7 @@ def run_switcher(
     )
     candidate_metric = extract_metric(
         scorecard,
-        model_id=candidate_model_id,
+        model_id=resolved_candidate_id,
         metric_name=config.metric_name,
     )
     n_val = extract_n(scorecard, model_id=active_model_id)
@@ -394,7 +405,7 @@ def run_switcher(
                 "ts": datetime.now(UTC).isoformat(),
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
-                "candidate_model_id": candidate_model_id,
+                "candidate_model_id": resolved_candidate_id,
                 "active_model_id_after": active_model_id,
                 "window_type": config.window_type,
                 "window_value": config.window_value,
@@ -419,12 +430,12 @@ def run_switcher(
     event_type = "canary_evaluated"
 
     if decision == "promote":
-        active_after = candidate_model_id
+        active_after = resolved_candidate_id
         event_type = "promoted"
         if config.update_registry_on_promote:
             project_root = data_dir.parent
             registry_path = project_root / "registry" / "active_model.yaml"
-            write_active_model_yaml(registry_path, candidate_model_id)
+            write_active_model_yaml(registry_path, resolved_candidate_id)
 
     elif decision == "rollback":
         event_type = "rollback"
@@ -438,7 +449,7 @@ def run_switcher(
             "ts": datetime.now(UTC).isoformat(),
             "event_type": event_type,
             "active_model_id_before": active_model_id,
-            "candidate_model_id": candidate_model_id,
+            "candidate_model_id": resolved_candidate_id,
             "active_model_id_after": active_after,
             "window_type": config.window_type,
             "window_value": config.window_value,
