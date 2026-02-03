@@ -47,7 +47,7 @@ def run(
     elif method == "hmm":
         # Implement in a later step:
         # - src/regimes/hmm.py with label_regimes_hmm(df, cfg)
-        from src.regimes.hmm import label_regimes_hmm  # type: ignore
+        from src.regimes.hmm import label_regimes_hmm
 
         labels = label_regimes_hmm(df, cfg=cfg)
     else:

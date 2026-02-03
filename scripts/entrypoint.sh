@@ -66,14 +66,14 @@ from src.inference.batch_predict import run_stage
 
 project_root = Path(os.getenv("PROJECT_ROOT", Path.cwd())).resolve()
 data_dir = Path(os.getenv("DATA_DIR", project_root / "data")).resolve()
-feat_dir = data_dir / "features"
+reg_dir = data_dir / "regimes"
 
-candidates = sorted(feat_dir.glob("*.parquet"), key=lambda p: p.stat().st_mtime, reverse=True)
+candidates = sorted(reg_dir.glob("*.parquet"), key=lambda p: p.stat().st_mtime, reverse=True)
 if not candidates:
-    raise FileNotFoundError(f"No features parquet files found in {feat_dir}")
-features_latest = candidates[0]
+    raise FileNotFoundError(f"No regimes parquet files found in {reg_dir}")
+regimes_latest = candidates[0]
 
-run_stage(features_path=features_latest)
+run_stage(features_path=regimes_latest)
 PYCODE
     ;;
 

@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import joblib
 import mlflow
 import mlflow.lightgbm  # important: avoid scoping bugs
 import mlflow.sklearn  # fallback
@@ -25,6 +26,9 @@ class TrainConfig:
     target_shift: int
     group_col: str | None
     vol_window: int | None
+
+    # NEW: which regime this expert is for (controls output path + naming)
+    regime: str
 
     model_name: str
     experiment_name: str
@@ -81,10 +85,24 @@ def _parse_args() -> TrainConfig:
         help="Optional rolling window size for volatility normalization (e.g. 20).",
     )
 
+    # NEW: regime controls output folder under models/experts/<regime>/
+    p.add_argument(
+        "--regime",
+        required=True,
+        choices=["bullish", "bearish", "sideways"],
+        help="Which regime expert this model is for. Writes to models/experts/<regime>/",
+    )
+
     p.add_argument("--model-name", default="lightgbm_expert", help="Logical name for this expert.")
     p.add_argument("--experiment-name", default="market-regime", help="MLflow experiment name.")
     p.add_argument("--run-name", default="", help="Optional MLflow run name.")
-    p.add_argument("--output-dir", default="models/experts/lightgbm", help="Local output folder.")
+
+    # IMPORTANT: now this is the ROOT experts directory (not a per-run leaf dir)
+    p.add_argument(
+        "--output-dir",
+        default="models/experts",
+        help="Root output folder. Model will be written under models/experts/<regime>/<timestamp>/ and latest.joblib",
+    )
 
     p.add_argument(
         "--id-cols",
@@ -133,6 +151,7 @@ def _parse_args() -> TrainConfig:
         target_shift=args.target_shift,
         group_col=args.group_col,
         vol_window=args.vol_window,
+        regime=args.regime,
         model_name=args.model_name,
         experiment_name=args.experiment_name,
         run_name=run_name,
@@ -348,13 +367,24 @@ def main() -> None:
     }
     params.update(user_params)
 
-    out_dir = Path(cfg.output_dir)
+    # ----------------------------
+    # NEW: output layout
+    # models/experts/<regime>/<timestamp>/
+    # models/experts/<regime>/latest.joblib
+    # ----------------------------
+    ts_slug = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    root = Path(cfg.output_dir)
+    out_dir = root / cfg.regime / ts_slug
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    latest_dir = root / cfg.regime
+    latest_dir.mkdir(parents=True, exist_ok=True)
 
     with mlflow.start_run(run_name=cfg.run_name) as run:
         mlflow.log_params(
             {
                 "model_name": cfg.model_name,
+                "regime": cfg.regime,
                 "features_path": cfg.features_path,
                 "target_col": cfg.target_col,
                 "target_expr": cfg.target_expr or "",
@@ -405,9 +435,22 @@ def main() -> None:
         mlflow.log_metrics({f"val_{k}": v for k, v in val_metrics.items()})
         mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
 
-        # Save feature list
-        (out_dir / "feature_columns.json").write_text(json.dumps(cols, indent=2), encoding="utf-8")
-        mlflow.log_artifact(str(out_dir / "feature_columns.json"))
+        # Save feature list (local)
+        feature_cols_path = out_dir / "feature_columns.json"
+        feature_cols_path.write_text(json.dumps(cols, indent=2), encoding="utf-8")
+        mlflow.log_artifact(str(feature_cols_path))
+
+        # Convenience copy for "latest"
+        (latest_dir / "feature_columns.json").write_text(
+            json.dumps(cols, indent=2), encoding="utf-8"
+        )
+
+        # NEW: Save joblib artifacts for your pipeline
+        model_path = out_dir / "model.joblib"
+        joblib.dump(model, model_path)
+
+        latest_model_path = latest_dir / "latest.joblib"
+        joblib.dump(model, latest_model_path)
 
         # Log model to MLflow (keep your current behavior)
         try:
@@ -425,8 +468,11 @@ def main() -> None:
 
         mlflow.set_tag("expert_type", "lightgbm")
         mlflow.set_tag("expert_name", cfg.model_name)
+        mlflow.set_tag("expert_regime", cfg.regime)
         mlflow.set_tag("run_id", run.info.run_id)
 
+    print(f"Wrote: {out_dir}")
+    print(f"Wrote: {latest_dir}")
     print("done")
 
 
