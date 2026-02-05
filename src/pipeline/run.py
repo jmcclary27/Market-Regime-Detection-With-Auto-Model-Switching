@@ -8,6 +8,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+import json
+import pandas as pd
+from src.config.load_config import load_config
 from src.monitoring import metrics as m
 from src.regimes.hmm import compute_hmm_diagnostics
 
@@ -115,30 +118,45 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         regimes_parquet = regimes_run(input_path=features_parquet, timestamp=cfg.run_ts)
 
     step("regimes", _regimes)
-    
-        # ---- regime diagnostics (PR11) ----
+
+    # ---- regime diagnostics ----
     def _regime_diagnostics() -> None:
         if features_parquet is None:
             raise RuntimeError("features_parquet not set")
 
-        # Read features to compute diagnostics on the same inputs regimes used
+        # Load project settings (single source of truth)
+        settings = load_config()
+
+        # Use the same inputs the HMM saw
         df_features = pd.read_parquet(features_parquet)
 
-        diag = compute_hmm_diagnostics(df_features, cfg={}, run_ts=cfg.run_ts)  # replace cfg={} with your loaded settings dict if available
+        diag = compute_hmm_diagnostics(
+            df_features,
+            cfg=settings,
+            run_ts=cfg.run_ts,
+        )
 
-        # Save JSON artifact
+        # Persist artifacts
         out_dir = cfg.project_root / "artifacts" / "regimes"
         out_dir.mkdir(parents=True, exist_ok=True)
-        out_path = out_dir / f"diagnostics_{cfg.run_ts}.json"
-        out_path.write_text(json.dumps(diag.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
 
-        # Save quick-look CSV artifacts
-        tc = pd.DataFrame(diag.transition_counts)
-        tp = pd.DataFrame(diag.transition_probs)
-        tc.to_csv(out_dir / f"transition_counts_{cfg.run_ts}.csv", index=False)
-        tp.to_csv(out_dir / f"transition_probs_{cfg.run_ts}.csv", index=False)
+        diag_path = out_dir / f"diagnostics_{cfg.run_ts}.json"
+        diag_path.write_text(
+            json.dumps(diag.to_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
 
-        # Log to MLflow if active
+        # Quick-look CSVs
+        pd.DataFrame(diag.transition_counts).to_csv(
+            out_dir / f"transition_counts_{cfg.run_ts}.csv",
+            index=False,
+        )
+        pd.DataFrame(diag.transition_probs).to_csv(
+            out_dir / f"transition_probs_{cfg.run_ts}.csv",
+            index=False,
+        )
+
+        # MLflow logging (safe, non-fatal)
         try:
             import mlflow
 
@@ -146,15 +164,12 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                 mlflow.log_metric(m.REGIME_ENTROPY, diag.regime_entropy)
                 mlflow.log_metric(m.AVG_REGIME_DURATION, diag.avg_regime_duration)
                 mlflow.log_metric(m.SWITCHES_PER_1000_STEPS, diag.switches_per_1000_steps)
+
                 for k, v in enumerate(diag.pct_time_regime):
                     mlflow.log_metric(f"{m.PCT_TIME_REGIME_PREFIX}{k}", float(v))
 
-                # log artifacts if you want them attached to the run
-                mlflow.log_artifact(str(out_path))
-                mlflow.log_artifact(str(out_dir / f"transition_counts_{cfg.run_ts}.csv"))
-                mlflow.log_artifact(str(out_dir / f"transition_probs_{cfg.run_ts}.csv"))
+                mlflow.log_artifact(str(diag_path))
         except Exception:
-            # Telemetry should never crash the pipeline
             LOG.exception("Regime diagnostics MLflow logging failed")
 
     step("regime_diagnostics", _regime_diagnostics)
