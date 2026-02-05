@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 
 @dataclass(frozen=True)
@@ -89,42 +90,65 @@ def compute_durations(labels: np.ndarray) -> dict[str, list[int]]:
     return out
 
 
-def compute_transition_counts(labels: np.ndarray, n_regimes: int) -> np.ndarray:
-    counts = np.zeros((n_regimes, n_regimes), dtype=int)
+def compute_transition_counts(labels: NDArray[np.integer[Any]], n_regimes: int) -> NDArray[np.int_]:
+    counts: NDArray[np.int_] = np.zeros((n_regimes, n_regimes), dtype=int)
     if labels.size <= 1:
         return counts
 
-    a = labels[:-1].astype(int)
-    b = labels[1:].astype(int)
-    for i, j in zip(a, b):
-        if 0 <= i < n_regimes and 0 <= j < n_regimes:
-            counts[i, j] += 1
+    a: NDArray[np.int_] = labels[:-1].astype(int)
+    b: NDArray[np.int_] = labels[1:].astype(int)
+
+    for i, j in zip(a, b, strict=False):
+        ii = int(i)
+        jj = int(j)
+        if 0 <= ii < n_regimes and 0 <= jj < n_regimes:
+            counts[ii, jj] += 1
     return counts
 
 
-def normalize_rows(counts: np.ndarray) -> np.ndarray:
-    probs = counts.astype(float)
-    row_sums = probs.sum(axis=1, keepdims=True)
+def normalize_rows(counts: NDArray[np.integer[Any]]) -> NDArray[np.float64]:
+    probs: NDArray[np.float64] = counts.astype(float)
+    row_sums: NDArray[np.float64] = probs.sum(axis=1, keepdims=True)
+
     with np.errstate(divide="ignore", invalid="ignore"):
-        probs = np.divide(probs, row_sums, out=np.zeros_like(probs), where=row_sums != 0.0)
+        probs = np.divide(
+            probs,
+            row_sums,
+            out=np.zeros_like(probs),
+            where=row_sums != 0.0,
+        )
     return probs
 
 
-def compute_entropy(p: np.ndarray, eps: float = 1e-12) -> float:
+def compute_entropy(p: NDArray[np.floating[Any]], eps: float = 1e-12) -> float:
     """
     Shannon entropy over regime occupancy distribution.
     p should sum to ~1. Returns entropy in nats.
     """
-    p_clip = np.clip(p.astype(float), eps, 1.0)
-    p_clip = p_clip / float(p_clip.sum())
-    return _safe_float(float(-np.sum(p_clip * np.log(p_clip))))
+    p_arr: NDArray[np.float64] = np.asarray(p, dtype=float)
+    p_clip: NDArray[np.float64] = np.clip(p_arr, eps, 1.0)
+    denom = float(p_clip.sum())
+    if denom <= 0.0 or not np.isfinite(denom):
+        return float("nan")
+
+    p_norm: NDArray[np.float64] = p_clip / denom
+    s = float(np.sum(p_norm * np.log(p_norm)))
+    ent = -s
+    return _safe_float(ent)
 
 
 def confidence_stats(conf: np.ndarray) -> RegimeConfidenceStats:
     conf = conf.astype(float)
     conf = conf[np.isfinite(conf)]
     if conf.size == 0:
-        return RegimeConfidenceStats(mean=float("nan"), p10=float("nan"), p50=float("nan"), p90=float("nan"), min=float("nan"), max=float("nan"))
+        return RegimeConfidenceStats(
+            mean=float("nan"),
+            p10=float("nan"),
+            p50=float("nan"),
+            p90=float("nan"),
+            min=float("nan"),
+            max=float("nan"),
+        )
 
     q10, q50, q90 = np.quantile(conf, [0.10, 0.50, 0.90])
     return RegimeConfidenceStats(

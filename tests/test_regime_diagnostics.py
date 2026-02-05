@@ -47,4 +47,6 @@ def test_regime_diagnostics_components_stable() -> None:
     row_sums = tp.sum(axis=1)
     assert np.isclose(row_sums[0], 1.0)
     assert np.isclose(row_sums[1], 1.0)
-    assert np.isclose(row_sums[2], 1.0) or np.isclose(row_sums[2], 0.0)  # depends on whether last regime has outgoing transitions
+    assert np.isclose(row_sums[2], 1.0) or np.isclose(
+        row_sums[2], 0.0
+    )  # depends on whether last regime has outgoing transitions

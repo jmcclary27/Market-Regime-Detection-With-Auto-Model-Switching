@@ -9,9 +9,10 @@ from typing import Any, cast
 import joblib
 import numpy as np
 import pandas as pd
+
 from src.regimes.diagnostics import (
-    RegimeDiagnostics,
     RegimeConfidenceStats,
+    RegimeDiagnostics,
     compute_durations,
     compute_entropy,
     compute_pct_time,
@@ -244,6 +245,7 @@ def label_regimes_hmm(df: pd.DataFrame, *, cfg: dict[str, Any]) -> pd.DataFrame:
 
     return pd.DataFrame({"regime": regimes, "regime_explanation": explanations}, index=df.index)
 
+
 def compute_hmm_diagnostics(
     df: pd.DataFrame,
     *,
@@ -315,7 +317,9 @@ def compute_hmm_diagnostics(
             transition_probs=[[0.0 for _ in range(n_regimes)] for _ in range(n_regimes)],
             regime_entropy=float("nan"),
             confidence=None,
-            model_version=str(art.metadata.get("version")) if art.metadata.get("version") is not None else None,
+            model_version=str(art.metadata.get("version"))
+            if art.metadata.get("version") is not None
+            else None,
         )
 
     X = obs_df.loc[valid].to_numpy(dtype=np.float64)
@@ -361,5 +365,7 @@ def compute_hmm_diagnostics(
         transition_probs=t_probs.tolist(),
         regime_entropy=float(entropy),
         confidence=conf_out,
-        model_version=str(art.metadata.get("version")) if art.metadata.get("version") is not None else None,
+        model_version=str(art.metadata.get("version"))
+        if art.metadata.get("version") is not None
+        else None,
     )

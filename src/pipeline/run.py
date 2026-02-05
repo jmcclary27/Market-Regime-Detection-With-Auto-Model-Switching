@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-import json
+from typing import Any
+
 import pandas as pd
+
 from src.config.load_config import load_config
 from src.monitoring import metrics as m
 from src.regimes.hmm import compute_hmm_diagnostics
@@ -82,8 +85,8 @@ def latest_raw_file(raw_dir: Path) -> Path:
 def run_pipeline(cfg: PipelineConfig) -> None:
     LOG.info("Pipeline run started, run_ts=%s", cfg.run_ts)
 
+    mlflow: Any | None = None
     created_run = False
-    mlflow = None  # type: ignore[assignment]
 
     try:
         import mlflow as _mlflow
@@ -217,7 +220,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         str(regimes_parquet) if regimes_parquet else None,
         str(predictions_parquet) if predictions_parquet else None,
     )
-    
+
     # ---- end MLflow pipeline run if we created it ----
     try:
         if mlflow is not None and created_run:
