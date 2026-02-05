@@ -1,12 +1,21 @@
+# src/pipeline/run.py
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
+
+import pandas as pd
+
+from src.config.load_config import load_config
+from src.monitoring import metrics as m
+from src.regimes.hmm import compute_hmm_diagnostics
 
 LOG = logging.getLogger("pipeline")
 
@@ -76,6 +85,25 @@ def latest_raw_file(raw_dir: Path) -> Path:
 def run_pipeline(cfg: PipelineConfig) -> None:
     LOG.info("Pipeline run started, run_ts=%s", cfg.run_ts)
 
+    mlflow: Any | None = None
+    created_run = False
+
+    try:
+        import mlflow as _mlflow
+
+        mlflow = _mlflow
+        if mlflow.active_run() is None:
+            exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "pipeline")
+            mlflow.set_experiment(exp_name)
+            mlflow.start_run(run_name=f"pipeline_{cfg.run_ts}")
+            created_run = True
+
+        mlflow.set_tag("run_ts", cfg.run_ts)
+        mlflow.set_tag("component", "pipeline")
+
+    except Exception:
+        LOG.exception("MLflow setup failed, continuing without MLflow")
+
     # ---- imports (cheap + explicit) ----
     from src.deploy.switcher import run as switch_run
     from src.eval.run_evaluator import run as eval_run
@@ -113,6 +141,61 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
     step("regimes", _regimes)
 
+    # ---- regime diagnostics ----
+    def _regime_diagnostics() -> None:
+        if features_parquet is None:
+            raise RuntimeError("features_parquet not set")
+
+        # Load project settings (single source of truth)
+        settings = load_config()
+
+        # Use the same inputs the HMM saw
+        df_features = pd.read_parquet(features_parquet)
+
+        diag = compute_hmm_diagnostics(
+            df_features,
+            cfg=settings,
+            run_ts=cfg.run_ts,
+        )
+
+        # Persist artifacts
+        out_dir = cfg.project_root / "artifacts" / "regimes"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        diag_path = out_dir / f"diagnostics_{cfg.run_ts}.json"
+        diag_path.write_text(
+            json.dumps(diag.to_dict(), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+        # Quick-look CSVs
+        pd.DataFrame(diag.transition_counts).to_csv(
+            out_dir / f"transition_counts_{cfg.run_ts}.csv",
+            index=False,
+        )
+        pd.DataFrame(diag.transition_probs).to_csv(
+            out_dir / f"transition_probs_{cfg.run_ts}.csv",
+            index=False,
+        )
+
+        # MLflow logging (safe, non-fatal)
+        try:
+            import mlflow
+
+            if mlflow.active_run() is not None:
+                mlflow.log_metric(m.REGIME_ENTROPY, diag.regime_entropy)
+                mlflow.log_metric(m.AVG_REGIME_DURATION, diag.avg_regime_duration)
+                mlflow.log_metric(m.SWITCHES_PER_1000_STEPS, diag.switches_per_1000_steps)
+
+                for k, v in enumerate(diag.pct_time_regime):
+                    mlflow.log_metric(f"{m.PCT_TIME_REGIME_PREFIX}{k}", float(v))
+
+                mlflow.log_artifact(str(diag_path))
+        except Exception:
+            LOG.exception("Regime diagnostics MLflow logging failed")
+
+    step("regime_diagnostics", _regime_diagnostics)
+
     # ---- predict ----
     predictions_parquet: Path | None = None
 
@@ -125,7 +208,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     step("predict", _predict)
 
     # ---- eval ----
-    # (likely next to refactor to accept predictions_parquet + timestamp)
     step("eval", eval_run)
 
     # ---- switch ----
@@ -138,6 +220,13 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         str(regimes_parquet) if regimes_parquet else None,
         str(predictions_parquet) if predictions_parquet else None,
     )
+
+    # ---- end MLflow pipeline run if we created it ----
+    try:
+        if mlflow is not None and created_run:
+            mlflow.end_run()
+    except Exception:
+        LOG.exception("Failed to end MLflow run cleanly")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
