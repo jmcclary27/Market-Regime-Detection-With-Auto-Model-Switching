@@ -82,6 +82,25 @@ def latest_raw_file(raw_dir: Path) -> Path:
 def run_pipeline(cfg: PipelineConfig) -> None:
     LOG.info("Pipeline run started, run_ts=%s", cfg.run_ts)
 
+    created_run = False
+    mlflow = None  # type: ignore[assignment]
+
+    try:
+        import mlflow as _mlflow
+
+        mlflow = _mlflow
+        if mlflow.active_run() is None:
+            exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "pipeline")
+            mlflow.set_experiment(exp_name)
+            mlflow.start_run(run_name=f"pipeline_{cfg.run_ts}")
+            created_run = True
+
+        mlflow.set_tag("run_ts", cfg.run_ts)
+        mlflow.set_tag("component", "pipeline")
+
+    except Exception:
+        LOG.exception("MLflow setup failed, continuing without MLflow")
+
     # ---- imports (cheap + explicit) ----
     from src.deploy.switcher import run as switch_run
     from src.eval.run_evaluator import run as eval_run
@@ -186,7 +205,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     step("predict", _predict)
 
     # ---- eval ----
-    # (likely next to refactor to accept predictions_parquet + timestamp)
     step("eval", eval_run)
 
     # ---- switch ----
@@ -199,6 +217,13 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         str(regimes_parquet) if regimes_parquet else None,
         str(predictions_parquet) if predictions_parquet else None,
     )
+    
+    # ---- end MLflow pipeline run if we created it ----
+    try:
+        if mlflow is not None and created_run:
+            mlflow.end_run()
+    except Exception:
+        LOG.exception("Failed to end MLflow run cleanly")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
