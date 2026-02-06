@@ -267,6 +267,15 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             res.trades.to_parquet(trades_path, index=False)
 
             # Optional MLflow artifacts (safe, non-fatal)
+            from src.backtest.metrics import compute_portfolio_metrics
+
+            m_port = compute_portfolio_metrics(
+                results_df=results_df,
+                trades_df=res.trades,
+                periods_per_year=252,
+            )
+
+            # Optional MLflow artifacts + metrics (safe, non-fatal)
             try:
                 import mlflow
 
@@ -274,11 +283,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
                     mlflow.log_artifact(str(results_path))
                     mlflow.log_artifact(str(trades_path))
                     mlflow.set_tag("backtest_asset", "SPY")
+                    mlflow.set_tag("backtest_model_fallback", fallback)
+
+                    mlflow.log_metric("bt_cagr", m_port.cagr)
+                    mlflow.log_metric("bt_sharpe", m_port.sharpe)
+                    mlflow.log_metric("bt_sortino", m_port.sortino)
+                    mlflow.log_metric("bt_max_drawdown", m_port.max_drawdown)
+                    mlflow.log_metric("bt_turnover", m_port.turnover)
+                    mlflow.log_metric("bt_profit_factor", m_port.profit_factor)
             except Exception:
                 LOG.exception("Backtest MLflow logging failed")
-
-            LOG.info("Backtest wrote: %s", results_path)
-            LOG.info("Backtest wrote: %s", trades_path)
 
         step("backtest", _backtest)
 
