@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
@@ -19,12 +19,15 @@ from src.regimes.hmm import compute_hmm_diagnostics
 
 LOG = logging.getLogger("pipeline")
 
+PipelineMode = Literal["pipeline", "backtest"]
+
 
 @dataclass(frozen=True)
 class PipelineConfig:
     project_root: Path
     data_dir: Path
     run_ts: str
+    mode: PipelineMode
 
 
 def utc_timestamp() -> str:
@@ -64,10 +67,12 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
 
     run_ts = args.run_ts or os.environ.get("RUN_TS") or utc_timestamp()
 
+    mode: PipelineMode = args.mode
     return PipelineConfig(
         project_root=project_root,
         data_dir=data_dir,
         run_ts=run_ts,
+        mode=mode,
     )
 
 
@@ -83,7 +88,7 @@ def latest_raw_file(raw_dir: Path) -> Path:
 
 
 def run_pipeline(cfg: PipelineConfig) -> None:
-    LOG.info("Pipeline run started, run_ts=%s", cfg.run_ts)
+    LOG.info("Pipeline run started, run_ts=%s mode=%s", cfg.run_ts, cfg.mode)
 
     mlflow: Any | None = None
     created_run = False
@@ -100,6 +105,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
         mlflow.set_tag("run_ts", cfg.run_ts)
         mlflow.set_tag("component", "pipeline")
+        mlflow.set_tag("mode", cfg.mode)
 
     except Exception:
         LOG.exception("MLflow setup failed, continuing without MLflow")
@@ -208,14 +214,19 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     step("predict", _predict)
 
     # ---- eval ----
-    step("eval", eval_run)
+    # In backtest mode, we typically don't need online evaluator/scorecards.
+    if cfg.mode == "pipeline":
+        step("eval", eval_run)
 
     # ---- switch ----
-    step("switch", switch_run)
+    # In backtest mode, we also usually skip writing "current active model" state.
+    if cfg.mode == "pipeline":
+        step("switch", switch_run)
 
     LOG.info(
-        "Pipeline run completed, run_ts=%s (features=%s, regimes=%s, predictions=%s)",
+        "Pipeline run completed, run_ts=%s mode=%s (features=%s, regimes=%s, predictions=%s)",
         cfg.run_ts,
+        cfg.mode,
         str(features_parquet) if features_parquet else None,
         str(regimes_parquet) if regimes_parquet else None,
         str(predictions_parquet) if predictions_parquet else None,
@@ -235,6 +246,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--run-ts",
         default=None,
         help="Optional shared timestamp, e.g. 20260112_141530Z",
+    )
+    p.add_argument(
+        "--mode",
+        default="pipeline",
+        choices=("pipeline", "backtest"),
+        help="Run mode: pipeline runs eval+switch, backtest skips eval+switch (for PR12).",
     )
     p.add_argument(
         "-v",

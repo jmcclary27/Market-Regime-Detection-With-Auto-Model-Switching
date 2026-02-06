@@ -67,3 +67,37 @@ def signals_from_predictions_long(
 
     signals = pd.DataFrame({asset: sig})
     return SignalAdapterResult(signals=signals, chosen_model_name=chosen)
+
+
+def signals_spy_from_predictions(
+    preds: pd.DataFrame,
+    *,
+    features: pd.DataFrame,
+) -> pd.DataFrame:
+    if "timestamp" not in features.columns:
+        raise ValueError("features missing required column: timestamp")
+
+    ts_index = pd.Index(features["timestamp"], name="timestamp")
+
+    active = preds.loc[preds["is_active"] == True].copy()  # noqa: E712
+    if active.empty:
+        raise ValueError("No active predictions (is_active==True)")
+
+    if active["row_id"].duplicated().any():
+        counts = active["row_id"].value_counts()
+        bad = counts[counts > 1].head(10).to_dict()
+        raise ValueError(f"Multiple active predictions for same row_id. Examples: {bad}")
+
+    row_ids = active["row_id"].astype(int).to_numpy()
+    if row_ids.min() < 0 or row_ids.max() >= len(features):
+        raise ValueError(
+            f"row_id out of bounds. row_id range [{row_ids.min()}, {row_ids.max()}], "
+            f"features len={len(features)}"
+        )
+
+    active = active.sort_values("row_id")
+
+    sig = pd.Series(0.0, index=ts_index, dtype="float64")
+    sig.iloc[active["row_id"].astype(int).to_numpy()] = active["y_pred"].astype(float).to_numpy()
+
+    return pd.DataFrame({"SPY": sig}, index=ts_index)
