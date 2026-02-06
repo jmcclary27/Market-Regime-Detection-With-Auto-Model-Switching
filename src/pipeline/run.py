@@ -152,10 +152,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         if features_parquet is None:
             raise RuntimeError("features_parquet not set")
 
-        # Load project settings (single source of truth)
         settings = load_config()
-
-        # Use the same inputs the HMM saw
         df_features = pd.read_parquet(features_parquet)
 
         diag = compute_hmm_diagnostics(
@@ -164,7 +161,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             run_ts=cfg.run_ts,
         )
 
-        # Persist artifacts
         out_dir = cfg.project_root / "artifacts" / "regimes"
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -174,7 +170,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             encoding="utf-8",
         )
 
-        # Quick-look CSVs
         pd.DataFrame(diag.transition_counts).to_csv(
             out_dir / f"transition_counts_{cfg.run_ts}.csv",
             index=False,
@@ -184,7 +179,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             index=False,
         )
 
-        # MLflow logging (safe, non-fatal)
         try:
             import mlflow
 
@@ -213,13 +207,86 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
     step("predict", _predict)
 
+    # ---- backtest (PR12) ----
+    # Runs only in --mode backtest. Produces artifacts/backtest/results_<run_ts>.parquet
+    # and artifacts/backtest/trades_<run_ts>.parquet.
+    if cfg.mode == "backtest":
+
+        def _backtest() -> None:
+            if features_parquet is None:
+                raise RuntimeError("features_parquet not set")
+            if predictions_parquet is None:
+                raise RuntimeError("predictions_parquet not set")
+
+            from src.backtest.adapters import signals_spy_from_predictions
+            from src.backtest.engine import BacktestConfig, run_backtest
+
+            df_features = pd.read_parquet(features_parquet)
+
+            # SPY only for v1
+            prices = (
+                df_features[["timestamp", "close_x"]]
+                .rename(columns={"close_x": "SPY"})
+                .set_index("timestamp")
+                .sort_index()
+            )
+
+            df_preds = pd.read_parquet(predictions_parquet)
+            fallback = os.getenv("BACKTEST_MODEL_NAME", "baseline")
+            signals = signals_spy_from_predictions(df_preds, features=df_features, fallback_model_name=fallback)
+            LOG.info("Backtest using model_name fallback=%s (is_active used if present)", fallback)
+
+            # Ensure exact index match
+            signals = signals.reindex(prices.index).fillna(0.0)
+
+            bt_cfg = BacktestConfig(
+                initial_cash=float(os.getenv("BACKTEST_INITIAL_CASH", "100000")),
+                fee_bps=float(os.getenv("BACKTEST_FEE_BPS", "0")),
+                spread_bps=float(os.getenv("BACKTEST_SPREAD_BPS", "0")),
+                slippage_bps=float(os.getenv("BACKTEST_SLIPPAGE_BPS", "0")),
+                seed=int(os.getenv("BACKTEST_SEED", "0")),
+            )
+
+            res = run_backtest(prices=prices, signals=signals, cfg=bt_cfg)
+
+            out_dir = cfg.project_root / "artifacts" / "backtest"
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+            results_path = out_dir / f"results_{cfg.run_ts}.parquet"
+            trades_path = out_dir / f"trades_{cfg.run_ts}.parquet"
+
+            # Results parquet: equity + gross/net returns
+            results_df = pd.DataFrame(
+                {
+                    "equity": res.equity_curve,
+                    "returns_gross": res.returns_gross,
+                    "returns_net": res.returns_net,
+                }
+            )
+            results_df.to_parquet(results_path, index=True)
+            res.trades.to_parquet(trades_path, index=False)
+
+            # Optional MLflow artifacts (safe, non-fatal)
+            try:
+                import mlflow
+
+                if mlflow.active_run() is not None:
+                    mlflow.log_artifact(str(results_path))
+                    mlflow.log_artifact(str(trades_path))
+                    mlflow.set_tag("backtest_asset", "SPY")
+            except Exception:
+                LOG.exception("Backtest MLflow logging failed")
+
+            LOG.info("Backtest wrote: %s", results_path)
+            LOG.info("Backtest wrote: %s", trades_path)
+
+        step("backtest", _backtest)
+
     # ---- eval ----
-    # In backtest mode, we typically don't need online evaluator/scorecards.
     if cfg.mode == "pipeline":
         step("eval", eval_run)
 
     # ---- switch ----
-    # In backtest mode, we also usually skip writing "current active model" state.
     if cfg.mode == "pipeline":
         step("switch", switch_run)
 
@@ -232,7 +299,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         str(predictions_parquet) if predictions_parquet else None,
     )
 
-    # ---- end MLflow pipeline run if we created it ----
     try:
         if mlflow is not None and created_run:
             mlflow.end_run()
@@ -251,7 +317,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         default="pipeline",
         choices=("pipeline", "backtest"),
-        help="Run mode: pipeline runs eval+switch, backtest skips eval+switch (for PR12).",
+        help="Run mode: pipeline runs eval+switch, backtest runs backtest step and skips eval+switch.",
     )
     p.add_argument(
         "-v",

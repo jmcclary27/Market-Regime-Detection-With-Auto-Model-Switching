@@ -73,31 +73,60 @@ def signals_spy_from_predictions(
     preds: pd.DataFrame,
     *,
     features: pd.DataFrame,
+    fallback_model_name: str | None = "baseline",
 ) -> pd.DataFrame:
+    """
+    Build SPY signals aligned to features.timestamp.
+
+    Selection rule:
+      1) If any rows have is_active==True, use those.
+      2) Else if fallback_model_name is set and exists, use that model.
+      3) Else choose the first model_name in sorted order (deterministic).
+    """
     if "timestamp" not in features.columns:
         raise ValueError("features missing required column: timestamp")
 
     ts_index = pd.Index(features["timestamp"], name="timestamp")
 
-    active = preds.loc[preds["is_active"] == True].copy()  # noqa: E712
-    if active.empty:
-        raise ValueError("No active predictions (is_active==True)")
+    required = {"row_id", "model_name", "y_pred"}
+    missing = required - set(preds.columns)
+    if missing:
+        raise ValueError(f"preds missing columns: {sorted(missing)}")
 
-    if active["row_id"].duplicated().any():
-        counts = active["row_id"].value_counts()
+    # Prefer active predictions if present
+    use = None
+    if "is_active" in preds.columns:
+        active = preds.loc[preds["is_active"] == True].copy()  # noqa: E712
+        if not active.empty:
+            use = active
+
+    # Otherwise fall back to a deterministic model choice
+    if use is None:
+        if fallback_model_name is not None and (preds["model_name"] == fallback_model_name).any():
+            use = preds.loc[preds["model_name"] == fallback_model_name].copy()
+        else:
+            # stable deterministic fallback: first model name alphabetically
+            chosen = sorted(preds["model_name"].dropna().unique().tolist())
+            if not chosen:
+                raise ValueError("No predictions found (model_name empty)")
+            use = preds.loc[preds["model_name"] == chosen[0]].copy()
+
+    # Enforce one prediction per row_id
+    if use["row_id"].duplicated().any():
+        counts = use["row_id"].value_counts()
         bad = counts[counts > 1].head(10).to_dict()
-        raise ValueError(f"Multiple active predictions for same row_id. Examples: {bad}")
+        raise ValueError(f"Multiple predictions for same row_id in chosen set. Examples: {bad}")
 
-    row_ids = active["row_id"].astype(int).to_numpy()
+    row_ids = use["row_id"].astype(int).to_numpy()
     if row_ids.min() < 0 or row_ids.max() >= len(features):
         raise ValueError(
             f"row_id out of bounds. row_id range [{row_ids.min()}, {row_ids.max()}], "
             f"features len={len(features)}"
         )
 
-    active = active.sort_values("row_id")
+    use = use.sort_values("row_id")
 
     sig = pd.Series(0.0, index=ts_index, dtype="float64")
-    sig.iloc[active["row_id"].astype(int).to_numpy()] = active["y_pred"].astype(float).to_numpy()
+    sig.iloc[use["row_id"].astype(int).to_numpy()] = use["y_pred"].astype(float).to_numpy()
 
     return pd.DataFrame({"SPY": sig}, index=ts_index)
