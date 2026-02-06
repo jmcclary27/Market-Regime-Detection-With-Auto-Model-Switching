@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import numpy as np
 import pandas as pd
 
 
@@ -81,7 +80,6 @@ def run_backtest(
     turnover = delta_pos.abs()  # fraction of portfolio traded (since position is fraction)
 
     # Simple deterministic costs in return space (bps applied to turnover)
-    cost_rate = (cfg.fee_bps + cfg.spread_bps + cfg.slippage_bps) / 10_000.0
     from src.backtest.costs import CostConfig, compute_costs_from_turnover
 
     costs = compute_costs_from_turnover(

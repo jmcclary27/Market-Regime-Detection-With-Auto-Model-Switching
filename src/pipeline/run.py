@@ -233,7 +233,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
             df_preds = pd.read_parquet(predictions_parquet)
             fallback = os.getenv("BACKTEST_MODEL_NAME", "baseline")
-            signals = signals_spy_from_predictions(df_preds, features=df_features, fallback_model_name=fallback)
+            signals = signals_spy_from_predictions(
+                df_preds, features=df_features, fallback_model_name=fallback
+            )
             LOG.info("Backtest using model_name fallback=%s (is_active used if present)", fallback)
 
             # Ensure exact index match
