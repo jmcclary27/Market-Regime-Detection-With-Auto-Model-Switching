@@ -82,7 +82,12 @@ def run_backtest(
 
     # Simple deterministic costs in return space (bps applied to turnover)
     cost_rate = (cfg.fee_bps + cfg.spread_bps + cfg.slippage_bps) / 10_000.0
-    costs = turnover * cost_rate
+    from src.backtest.costs import CostConfig, compute_costs_from_turnover
+
+    costs = compute_costs_from_turnover(
+        turnover,
+        CostConfig(fee_bps=cfg.fee_bps, spread_bps=cfg.spread_bps, slippage_bps=cfg.slippage_bps),
+    )
 
     strat_net = strat_gross - costs
 
