@@ -48,7 +48,7 @@ def compute_sharpe(returns: pd.Series, periods_per_year: int = 252) -> float:
         return float("nan")
     mu = float(r.mean())
     sd = float(r.std(ddof=0))
-    if sd == 0.0:
+    if sd <= 1e-12:
         return float("nan")
     return _safe_float((mu / sd) * np.sqrt(periods_per_year))
 
@@ -60,7 +60,7 @@ def compute_sortino(returns: pd.Series, periods_per_year: int = 252) -> float:
     mu = float(r.mean())
     downside = r[r < 0.0]
     dd = float(downside.std(ddof=0)) if not downside.empty else 0.0
-    if dd == 0.0:
+    if dd <= 1e-12:
         return float("nan")
     return _safe_float((mu / dd) * np.sqrt(periods_per_year))
 
