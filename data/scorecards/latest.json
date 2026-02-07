@@ -143,9 +143,10 @@
       "baseline"
     ]
   },
+  "run_ts": "20260207_TESTZ",
   "target": {
     "requested_target_col": "log_return_1",
     "y_true_col": "log_return_1_x"
   },
-  "timestamp": "1770482050"
+  "timestamp": "20260207_TESTZ"
 }

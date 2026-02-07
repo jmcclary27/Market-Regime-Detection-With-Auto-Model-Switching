@@ -1,7 +1,7 @@
-# src/pipeline/run.py
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -47,11 +47,7 @@ def step(name: str, fn: Callable[[], None]) -> None:
     try:
         fn()
     except SystemExit as e:
-        LOG.exception(
-            "SystemExit raised in step, %s (code=%s)",
-            name,
-            getattr(e, "code", None),
-        )
+        LOG.exception("SystemExit raised in step, %s (code=%s)", name, getattr(e, "code", None))
         raise
     except Exception:
         LOG.exception("Step failed, %s", name)
@@ -62,81 +58,144 @@ def step(name: str, fn: Callable[[], None]) -> None:
 def build_config(args: argparse.Namespace) -> PipelineConfig:
     default_root = Path(__file__).resolve().parents[2]
     project_root = Path(os.environ.get("PROJECT_ROOT", str(default_root))).resolve()
-
     data_dir = Path(os.environ.get("DATA_DIR", str(project_root / "data"))).resolve()
-
     run_ts = args.run_ts or os.environ.get("RUN_TS") or utc_timestamp()
-
     mode: PipelineMode = args.mode
-    return PipelineConfig(
-        project_root=project_root,
-        data_dir=data_dir,
-        run_ts=run_ts,
-        mode=mode,
-    )
+    return PipelineConfig(project_root=project_root, data_dir=data_dir, run_ts=run_ts, mode=mode)
 
 
 def latest_raw_file(raw_dir: Path) -> Path:
-    candidates = sorted(
-        raw_dir.glob("*.csv"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    candidates = sorted(raw_dir.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         raise FileNotFoundError(f"No raw CSV files found in {raw_dir}")
     return candidates[0]
 
 
-def run_pipeline(cfg: PipelineConfig) -> None:
-    LOG.info("Pipeline run started, run_ts=%s mode=%s", cfg.run_ts, cfg.mode)
+# -------------------------
+# Replay helpers
+# -------------------------
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
-    mlflow: Any | None = None
+
+def _load_lineage(project_root: Path, run_ts: str) -> dict[str, Any]:
+    p = project_root / "artifacts" / "lineage" / f"lineage_{run_ts}.json"
+    if not p.exists():
+        raise FileNotFoundError(f"Missing lineage file: {p}")
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def _resolve_path(project_root: Path, p: str) -> Path:
+    pp = Path(p)
+    return pp if pp.is_absolute() else (project_root / pp)
+
+
+def _assert_sha256(path: Path, expected: str, *, label: str) -> None:
+    got = _sha256_file(path)
+    if got != expected:
+        raise AssertionError(
+            f"Replay mismatch, {label} sha256 differs. expected={expected} got={got} path={path}"
+        )
+
+
+def _semantic_pred_compare(old_p: Path, new_p: Path) -> None:
+    a = pd.read_parquet(old_p)
+    b = pd.read_parquet(new_p)
+
+    key = ["row_id", "model_name", "model_source", "is_active"]
+    need = key + ["y_pred"]
+    for c in need:
+        if c not in a.columns or c not in b.columns:
+            raise AssertionError(f"Replay compare missing column {c}")
+
+    a2 = a[need].sort_values(key, kind="mergesort").reset_index(drop=True)
+    b2 = b[need].sort_values(key, kind="mergesort").reset_index(drop=True)
+
+    if not a2[key].equals(b2[key]):
+        raise AssertionError("Replay compare failed, prediction keys differ (row_id/model_name/...)")
+
+    diff = (a2["y_pred"] - b2["y_pred"]).abs().max()
+    if pd.isna(diff):
+        raise AssertionError("Replay compare failed, diff is NaN")
+    if float(diff) > 1e-12:
+        raise AssertionError(f"Replay compare failed, max |y_pred diff| = {diff}")
+
+
+# -------------------------
+# Pipeline
+# -------------------------
+def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | None = None) -> None:
+    LOG.info("Pipeline run started, run_ts=%s mode=%s replay=%s", cfg.run_ts, cfg.mode, replay)
+
+    lineage: dict[str, Any] | None = None
+    if replay:
+        if replay_ts is None:
+            replay_ts = cfg.run_ts
+        lineage = _load_lineage(cfg.project_root, replay_ts)
+        LOG.info("Loaded lineage for replay: %s", replay_ts)
+
+    mlflow_obj: Any | None = None
     created_run = False
-
     try:
         import mlflow as _mlflow
 
-        mlflow = _mlflow
-        if mlflow.active_run() is None:
+        mlflow_obj = _mlflow
+        if mlflow_obj.active_run() is None:
             exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "pipeline")
-            mlflow.set_experiment(exp_name)
-            mlflow.start_run(run_name=f"pipeline_{cfg.run_ts}")
+            mlflow_obj.set_experiment(exp_name)
+            mlflow_obj.start_run(run_name=f"pipeline_{cfg.run_ts}")
             created_run = True
 
-        mlflow.set_tag("run_ts", cfg.run_ts)
-        mlflow.set_tag("component", "pipeline")
-        mlflow.set_tag("mode", cfg.mode)
-
+        mlflow_obj.set_tag("run_ts", cfg.run_ts)
+        mlflow_obj.set_tag("component", "pipeline")
+        mlflow_obj.set_tag("mode", cfg.mode)
+        mlflow_obj.set_tag("replay", str(bool(replay)))
+        if replay and replay_ts is not None:
+            mlflow_obj.set_tag("replay_ts", str(replay_ts))
     except Exception:
         LOG.exception("MLflow setup failed, continuing without MLflow")
 
-    # ---- imports (cheap + explicit) ----
+    # ---- imports ----
     from src.deploy.switcher import run as switch_run
     from src.features.run_features import run as features_run
-
-    # IMPORTANT: use orchestration-friendly wrapper we added
     from src.inference.batch_predict import run_stage as predict_run
     from src.ingestion.run_ingestion import run as ingest_run
     from src.regimes.run_regime_detection import run as regimes_run
 
     LOG.info("All entrypoints imported, starting steps...")
 
-    # ---- poll ----
-    step("poll", ingest_run)
-
-    # Track inputs/outputs for PR13 lineage
+    # Track inputs/outputs for lineage
     raw_latest: Path | None = None
     features_parquet: Path | None = None
     features_manifest: Path | None = None
     regimes_parquet: Path | None = None
     predictions_parquet: Path | None = None
 
+    # ---- poll ----
+    if not replay:
+        step("poll", ingest_run)
+    else:
+        LOG.info("Replay enabled, skipping poll step")
+
     # ---- features ----
     def _features() -> None:
         nonlocal raw_latest, features_parquet, features_manifest
-        raw_latest = latest_raw_file(cfg.data_dir / "raw")
-        LOG.info("Using raw input: %s", raw_latest)
-        features_parquet, features_manifest = features_run(input_path=raw_latest, timestamp=cfg.run_ts)
+
+        if replay:
+            assert lineage is not None
+            raw_latest = _resolve_path(cfg.project_root, lineage["artifacts"]["raw_csv"]["path"])
+            LOG.info("Replay raw input: %s", raw_latest)
+        else:
+            raw_latest = latest_raw_file(cfg.data_dir / "raw")
+            LOG.info("Using raw input: %s", raw_latest)
+
+        features_parquet, features_manifest = features_run(
+            input_path=raw_latest, timestamp=cfg.run_ts
+        )
 
     step("features", _features)
 
@@ -157,42 +216,31 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         settings = load_config()
         df_features = pd.read_parquet(features_parquet)
 
-        diag = compute_hmm_diagnostics(
-            df_features,
-            cfg=settings,
-            run_ts=cfg.run_ts,
-        )
+        diag = compute_hmm_diagnostics(df_features, cfg=settings, run_ts=cfg.run_ts)
 
         out_dir = cfg.project_root / "artifacts" / "regimes"
         out_dir.mkdir(parents=True, exist_ok=True)
 
         diag_path = out_dir / f"diagnostics_{cfg.run_ts}.json"
-        diag_path.write_text(
-            json.dumps(diag.to_dict(), indent=2, sort_keys=True),
-            encoding="utf-8",
-        )
+        diag_path.write_text(json.dumps(diag.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
 
         pd.DataFrame(diag.transition_counts).to_csv(
-            out_dir / f"transition_counts_{cfg.run_ts}.csv",
-            index=False,
+            out_dir / f"transition_counts_{cfg.run_ts}.csv", index=False
         )
         pd.DataFrame(diag.transition_probs).to_csv(
-            out_dir / f"transition_probs_{cfg.run_ts}.csv",
-            index=False,
+            out_dir / f"transition_probs_{cfg.run_ts}.csv", index=False
         )
 
         try:
-            import mlflow
-
-            if mlflow.active_run() is not None:
-                mlflow.log_metric(m.REGIME_ENTROPY, diag.regime_entropy)
-                mlflow.log_metric(m.AVG_REGIME_DURATION, diag.avg_regime_duration)
-                mlflow.log_metric(m.SWITCHES_PER_1000_STEPS, diag.switches_per_1000_steps)
+            if mlflow_obj is not None and mlflow_obj.active_run() is not None:
+                mlflow_obj.log_metric(m.REGIME_ENTROPY, diag.regime_entropy)
+                mlflow_obj.log_metric(m.AVG_REGIME_DURATION, diag.avg_regime_duration)
+                mlflow_obj.log_metric(m.SWITCHES_PER_1000_STEPS, diag.switches_per_1000_steps)
 
                 for k, v in enumerate(diag.pct_time_regime):
-                    mlflow.log_metric(f"{m.PCT_TIME_REGIME_PREFIX}{k}", float(v))
+                    mlflow_obj.log_metric(f"{m.PCT_TIME_REGIME_PREFIX}{k}", float(v))
 
-                mlflow.log_artifact(str(diag_path))
+                mlflow_obj.log_artifact(str(diag_path))
         except Exception:
             LOG.exception("Regime diagnostics MLflow logging failed")
 
@@ -203,12 +251,26 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         nonlocal predictions_parquet
         if regimes_parquet is None:
             raise RuntimeError("regimes_parquet not set")
+
         predictions_parquet = predict_run(features_path=regimes_parquet)
+
+        # Ensure deterministic naming in data/predictions for this pipeline run_ts
+        out_dir = cfg.project_root / "data" / "predictions"
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        dst = out_dir / f"predictions_{cfg.run_ts}.parquet"
+        # Always write a fresh copy (even if predict_run already wrote something)
+        dfp = pd.read_parquet(predictions_parquet)
+        dfp.to_parquet(dst, index=False)
+        dfp.to_parquet(out_dir / "latest.parquet", index=False)
+        predictions_parquet = dst
 
     step("predict", _predict)
 
-    # ---- lineage (PR13) ----
+    # ---- lineage ----
     def _lineage() -> None:
+        nonlocal features_manifest
+
         if raw_latest is None:
             raise RuntimeError("raw_latest not set")
         if features_parquet is None:
@@ -221,7 +283,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         config_path = cfg.project_root / "src" / "config" / "settings.yaml"
         config_text = config_path.read_text(encoding="utf-8")
 
-        # If features_manifest wasn't returned for some reason, fall back to the conventional name
         if features_manifest is None:
             features_manifest = features_parquet.with_suffix(".manifest.json")
 
@@ -234,7 +295,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             "regimes_parquet": regimes_parquet,
             "predictions_parquet": predictions_parquet,
         }
-
         params = {
             "mode": cfg.mode,
             "market_symbols": load_config().get("market", {}).get("symbols", []),
@@ -247,13 +307,41 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             artifacts=artifacts,
             params=params,
         )
+
+        try:
+            if mlflow_obj is not None and mlflow_obj.active_run() is not None:
+                mlflow_obj.log_artifact(str(out))
+                mlflow_obj.set_tag("lineage_path", str(out))
+        except Exception:
+            LOG.exception("Lineage MLflow logging failed")
+
         LOG.info("Wrote lineage: %s", out)
 
     step("lineage", _lineage)
 
-    # ---- backtest (PR12) ----
-    # Runs only in --mode backtest. Produces artifacts/backtest/results_<run_ts>.parquet
-    # and artifacts/backtest/trades_<run_ts>.parquet.
+    # ---- replay verification ----
+    if replay:
+        def _replay_verify() -> None:
+            assert lineage is not None
+
+            # verify recorded artifacts are still the same bytes
+            for label in ("raw_csv", "features_parquet", "features_manifest", "regimes_parquet", "predictions_parquet"):
+                rec = lineage["artifacts"][label]
+                p = _resolve_path(cfg.project_root, rec["path"])
+                _assert_sha256(p, rec["sha256"], label=label)
+
+            # semantic compare predictions: lineage predictions vs newly produced predictions_<cfg.run_ts>.parquet
+            old_preds = _resolve_path(cfg.project_root, lineage["artifacts"]["predictions_parquet"]["path"])
+            new_preds = predictions_parquet
+            if new_preds is None:
+                raise RuntimeError("predictions_parquet not set")
+            _semantic_pred_compare(old_preds, new_preds)
+
+            LOG.info("Replay verification passed")
+
+        step("replay_verify", _replay_verify)
+
+    # ---- backtest ----
     if cfg.mode == "backtest":
 
         def _backtest() -> None:
@@ -264,10 +352,10 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
             from src.backtest.adapters import signals_spy_from_predictions
             from src.backtest.engine import BacktestConfig, run_backtest
+            from src.backtest.metrics import compute_portfolio_metrics
 
             df_features = pd.read_parquet(features_parquet)
 
-            # SPY only for v1
             prices = (
                 df_features[["timestamp", "close_x"]]
                 .rename(columns={"close_x": "SPY"})
@@ -280,9 +368,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             signals = signals_spy_from_predictions(
                 df_preds, features=df_features, fallback_model_name=fallback
             )
-            LOG.info("Backtest using model_name fallback=%s (is_active used if present)", fallback)
 
-            # Ensure exact index match
             signals = signals.reindex(prices.index).fillna(0.0)
 
             bt_cfg = BacktestConfig(
@@ -301,7 +387,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             results_path = out_dir / f"results_{cfg.run_ts}.parquet"
             trades_path = out_dir / f"trades_{cfg.run_ts}.parquet"
 
-            # Results parquet: equity + gross/net returns
             results_df = pd.DataFrame(
                 {
                     "equity": res.equity_curve,
@@ -312,31 +397,25 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             results_df.to_parquet(results_path, index=True)
             res.trades.to_parquet(trades_path, index=False)
 
-            # Optional MLflow artifacts (safe, non-fatal)
-            from src.backtest.metrics import compute_portfolio_metrics
-
             m_port = compute_portfolio_metrics(
                 results_df=results_df,
                 trades_df=res.trades,
                 periods_per_year=252,
             )
 
-            # Optional MLflow artifacts + metrics (safe, non-fatal)
             try:
-                import mlflow
+                if mlflow_obj is not None and mlflow_obj.active_run() is not None:
+                    mlflow_obj.log_artifact(str(results_path))
+                    mlflow_obj.log_artifact(str(trades_path))
+                    mlflow_obj.set_tag("backtest_asset", "SPY")
+                    mlflow_obj.set_tag("backtest_model_fallback", fallback)
 
-                if mlflow.active_run() is not None:
-                    mlflow.log_artifact(str(results_path))
-                    mlflow.log_artifact(str(trades_path))
-                    mlflow.set_tag("backtest_asset", "SPY")
-                    mlflow.set_tag("backtest_model_fallback", fallback)
-
-                    mlflow.log_metric("bt_cagr", m_port.cagr)
-                    mlflow.log_metric("bt_sharpe", m_port.sharpe)
-                    mlflow.log_metric("bt_sortino", m_port.sortino)
-                    mlflow.log_metric("bt_max_drawdown", m_port.max_drawdown)
-                    mlflow.log_metric("bt_turnover", m_port.turnover)
-                    mlflow.log_metric("bt_profit_factor", m_port.profit_factor)
+                    mlflow_obj.log_metric("bt_cagr", m_port.cagr)
+                    mlflow_obj.log_metric("bt_sharpe", m_port.sharpe)
+                    mlflow_obj.log_metric("bt_sortino", m_port.sortino)
+                    mlflow_obj.log_metric("bt_max_drawdown", m_port.max_drawdown)
+                    mlflow_obj.log_metric("bt_turnover", m_port.turnover)
+                    mlflow_obj.log_metric("bt_profit_factor", m_port.profit_factor)
             except Exception:
                 LOG.exception("Backtest MLflow logging failed")
 
@@ -346,16 +425,9 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     if cfg.mode == "pipeline":
 
         def _eval() -> None:
-            # Run evaluator with this pipeline's run_ts so artifacts are replayable
-            # We set RUN_TS env var and also pass --run-ts for robustness.
             os.environ["RUN_TS"] = cfg.run_ts
             os.environ["EVAL_RUN_TS"] = cfg.run_ts
 
-            # Prefer CLI-free invocation, but your evaluator currently reads argparse.
-            # So we invoke it as a module-level run() and rely on defaults for latest.parquet,
-            # while ensuring artifact naming uses cfg.run_ts by env var + arg.
-            #
-            # If you later refactor evaluator to accept parameters, swap this to direct call.
             from src.eval import run_evaluator as re
 
             argv = [
@@ -380,16 +452,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             if os.getenv("EVAL_WF_ANCHORED", "1") == "1":
                 argv.append("--wf-anchored")
 
-            # Call evaluator main with explicit argv to avoid relying on sys.argv
-            re.main()  # keeps backwards compat if you don't want argv threading yet
-
-            # If you want strict deterministic behavior, refactor re.main(argv) later.
+            re.main(argv)
 
         step("eval", _eval)
 
     # ---- switch ----
     if cfg.mode == "pipeline":
-        step("switch", switch_run)
+        if replay:
+            LOG.info("Replay enabled, skipping switch step")
+        else:
+            step("switch", switch_run)
 
     LOG.info(
         "Pipeline run completed, run_ts=%s mode=%s (features=%s, regimes=%s, predictions=%s)",
@@ -401,31 +473,28 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     )
 
     try:
-        if mlflow is not None and created_run:
-            mlflow.end_run()
+        if mlflow_obj is not None and created_run:
+            mlflow_obj.end_run()
     except Exception:
         LOG.exception("Failed to end MLflow run cleanly")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run full local pipeline")
-    p.add_argument(
-        "--run-ts",
-        default=None,
-        help="Optional shared timestamp, e.g. 20260112_141530Z",
-    )
+    p.add_argument("--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z")
     p.add_argument(
         "--mode",
         default="pipeline",
         choices=("pipeline", "backtest"),
-        help="Run mode: pipeline runs eval+switch, backtest runs backtest step and skips eval+switch.",
+        help="pipeline runs eval+switch, backtest runs backtest step and skips eval+switch.",
     )
     p.add_argument(
-        "-v",
-        "--verbose",
-        action="count",
-        default=0,
-        help="Increase verbosity (-v, -vv)",
+        "-v", "--verbose", action="count", default=0, help="Increase verbosity (-v, -vv)"
+    )
+    p.add_argument(
+        "--replay",
+        default=None,
+        help="Replay a prior run_ts using artifacts/lineage/lineage_<run_ts>.json",
     )
     return p.parse_args(argv)
 
@@ -435,12 +504,16 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(args.verbose)
     cfg = build_config(args)
 
-    try:
-        run_pipeline(cfg)
-    except BaseException:
-        LOG.exception("Pipeline crashed")
-        raise
+    if args.replay:
+        # run_ts becomes the *replayed* run id, so all produced artifacts are tagged with it
+        cfg = PipelineConfig(
+            project_root=cfg.project_root,
+            data_dir=cfg.data_dir,
+            run_ts=str(args.replay),
+            mode="pipeline",
+        )
 
+    run_pipeline(cfg, replay=bool(args.replay), replay_ts=args.replay)
     return 0
 
 

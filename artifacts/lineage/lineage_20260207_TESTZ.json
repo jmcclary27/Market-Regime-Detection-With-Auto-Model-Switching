@@ -1,0 +1,34 @@
+{
+  "artifacts": {
+    "features_manifest": {
+      "path": "data\\features\\20260207_TESTZ.manifest.json",
+      "sha256": "1ee25449a6c21dfdd2648591e55c0c6bf5c73468bd2b55aa263c9eb38e43821b"
+    },
+    "features_parquet": {
+      "path": "data\\features\\20260207_TESTZ.parquet",
+      "sha256": "5b8ae4978d745ca60c5b139cfb3cbbcfe72d629b260353470550458886ce43a8"
+    },
+    "predictions_parquet": {
+      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20260207_TESTZ.parquet",
+      "sha256": "e68c2f7e7b93e6f18b52886f141a2a6f39368234e50b2b487dd13fa3bf936878"
+    },
+    "raw_csv": {
+      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
+      "sha256": "c9feda47919ae7e032ed3a599724e66c9a8441716c27a20f48a2c00757af837a"
+    },
+    "regimes_parquet": {
+      "path": "data\\regimes\\20260207_TESTZ.parquet",
+      "sha256": "ebe3c166163e92d4b9da4ed66b023d23ab32bb7cb5d2a18a985c65b62dea118d"
+    }
+  },
+  "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
+  "git_commit": "b2b0438814afd298ee2f515c943d383b95ba6f6b",
+  "params": {
+    "market_symbols": [
+      "SPY",
+      "QQQ"
+    ],
+    "mode": "pipeline"
+  },
+  "run_ts": "20260207_TESTZ"
+}

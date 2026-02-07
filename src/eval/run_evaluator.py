@@ -74,7 +74,7 @@ def _ensure_time_sorted(eval_df: pd.DataFrame, features: pd.DataFrame) -> pd.Dat
     return out
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--features", default="data/features/latest.parquet")
     ap.add_argument("--regimes", default="data/regimes/latest.parquet")
@@ -104,7 +104,7 @@ def main() -> None:
         help="If set, train window expands (anchored). If not set, train window rolls (fixed size).",
     )
 
-    args, _unknown = ap.parse_known_args()
+    args, _unknown = ap.parse_known_args(argv)
 
     features_path = Path(args.features)
     regimes_path = Path(args.regimes)
