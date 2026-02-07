@@ -10,7 +10,7 @@
     },
     "predictions_parquet": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20260207_XXXXXXZ.parquet",
-      "sha256": "834e33c5f428cfd0d16dabfe3596f936982c8cdf93ea310dbe179587201f1901"
+      "sha256": "ed0ffc6d789198b9910604fa493da6c9c0bb7d62be3f289962663d38cb82af93"
     },
     "raw_csv": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
@@ -22,7 +22,7 @@
     }
   },
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
-  "git_commit": "b2b0438814afd298ee2f515c943d383b95ba6f6b",
+  "git_commit": "d85558d01280dffefc30f2d8076e4de483b89ea2",
   "params": {
     "market_symbols": [
       "SPY",

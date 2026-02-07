@@ -102,6 +102,13 @@ def _assert_sha256(path: Path, expected: str, *, label: str) -> None:
         )
 
 
+def run_ts_to_int(run_ts: str) -> int:
+    # "20260207_123456Z" -> 20260207123456
+    digits = "".join(ch for ch in run_ts if ch.isdigit())
+    # keep it bounded but stable
+    return int(digits[:14]) if len(digits) >= 14 else int(digits)
+
+
 def _semantic_pred_compare(old_p: Path, new_p: Path) -> None:
     a = pd.read_parquet(old_p)
     b = pd.read_parquet(new_p)
@@ -252,7 +259,7 @@ def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | 
         if regimes_parquet is None:
             raise RuntimeError("regimes_parquet not set")
 
-        predictions_parquet = predict_run(features_path=regimes_parquet)
+        predictions_parquet = predict_run(features_path=regimes_parquet, inference_ts=run_ts_to_int(cfg.run_ts))
 
         # Ensure deterministic naming in data/predictions for this pipeline run_ts
         out_dir = cfg.project_root / "data" / "predictions"
