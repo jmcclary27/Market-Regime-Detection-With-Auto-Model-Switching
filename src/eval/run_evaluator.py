@@ -141,11 +141,11 @@ def main() -> None:
     if args.walk_forward:
         eval_df_sorted = _ensure_time_sorted(eval_df, features)
 
-        # Build index for splitter from the same resolved market time (aligned with eval_df_sorted)
-        idx = pd.to_datetime(_extract_market_time(eval_df_sorted, features), utc=True, errors="raise")
+        # Resolve market time ONCE, even if eval_df has no 'timestamp' column.
+        market_ts = pd.to_datetime(_extract_market_time(eval_df_sorted, features), utc=True, errors="raise")
 
         splits = walk_forward_splits(
-            idx,
+            market_ts,
             train_size=int(args.wf_train),
             val_size=int(args.wf_val),
             test_size=int(args.wf_test),
@@ -160,16 +160,17 @@ def main() -> None:
         wf_rows: list[pd.DataFrame] = []
 
         for s in splits:
-            # Evaluate on TEST window only (this is the real out-of-sample slice)
+            # Evaluate on TEST window only
             test_df = eval_df_sorted.iloc[s.test.start : s.test.stop].copy()
             if test_df.empty:
                 continue
 
             test_metrics = compute_metrics_table(test_df, cfg=cfg).copy()
 
-            # Add split metadata, keep it easy to filter/group later
-            split_start = pd.to_datetime(test_df["timestamp"].iloc[0], utc=True)
-            split_end = pd.to_datetime(test_df["timestamp"].iloc[-1], utc=True)
+            # Split metadata from resolved market_ts, not from a 'timestamp' column
+            test_ts = market_ts.iloc[s.test.start : s.test.stop]
+            split_start = pd.Timestamp(test_ts.iloc[0])
+            split_end = pd.Timestamp(test_ts.iloc[-1])
 
             test_metrics.insert(0, "split_id", s.split_id)
             test_metrics.insert(1, "split_start", split_start)
