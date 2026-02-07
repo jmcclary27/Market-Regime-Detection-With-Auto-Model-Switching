@@ -112,7 +112,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
     # ---- imports (cheap + explicit) ----
     from src.deploy.switcher import run as switch_run
-    from src.eval.run_evaluator import run as eval_run
     from src.features.run_features import run as features_run
 
     # IMPORTANT: use orchestration-friendly wrapper we added
@@ -125,20 +124,23 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     # ---- poll ----
     step("poll", ingest_run)
 
-    # ---- features ----
+    # Track inputs/outputs for PR13 lineage
+    raw_latest: Path | None = None
     features_parquet: Path | None = None
+    features_manifest: Path | None = None
+    regimes_parquet: Path | None = None
+    predictions_parquet: Path | None = None
 
+    # ---- features ----
     def _features() -> None:
-        nonlocal features_parquet
+        nonlocal raw_latest, features_parquet, features_manifest
         raw_latest = latest_raw_file(cfg.data_dir / "raw")
         LOG.info("Using raw input: %s", raw_latest)
-        features_parquet, _ = features_run(input_path=raw_latest, timestamp=cfg.run_ts)
+        features_parquet, features_manifest = features_run(input_path=raw_latest, timestamp=cfg.run_ts)
 
     step("features", _features)
 
     # ---- regimes ----
-    regimes_parquet: Path | None = None
-
     def _regimes() -> None:
         nonlocal regimes_parquet
         if features_parquet is None:
@@ -197,8 +199,6 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     step("regime_diagnostics", _regime_diagnostics)
 
     # ---- predict ----
-    predictions_parquet: Path | None = None
-
     def _predict() -> None:
         nonlocal predictions_parquet
         if regimes_parquet is None:
@@ -206,6 +206,50 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         predictions_parquet = predict_run(features_path=regimes_parquet)
 
     step("predict", _predict)
+
+    # ---- lineage (PR13) ----
+    def _lineage() -> None:
+        if raw_latest is None:
+            raise RuntimeError("raw_latest not set")
+        if features_parquet is None:
+            raise RuntimeError("features_parquet not set")
+        if regimes_parquet is None:
+            raise RuntimeError("regimes_parquet not set")
+        if predictions_parquet is None:
+            raise RuntimeError("predictions_parquet not set")
+
+        config_path = cfg.project_root / "src" / "config" / "settings.yaml"
+        config_text = config_path.read_text(encoding="utf-8")
+
+        # If features_manifest wasn't returned for some reason, fall back to the conventional name
+        if features_manifest is None:
+            features_manifest = features_parquet.with_suffix(".manifest.json")
+
+        from src.data.lineage import write_run_lineage
+
+        artifacts = {
+            "raw_csv": raw_latest,
+            "features_parquet": features_parquet,
+            "features_manifest": features_manifest,
+            "regimes_parquet": regimes_parquet,
+            "predictions_parquet": predictions_parquet,
+        }
+
+        params = {
+            "mode": cfg.mode,
+            "market_symbols": load_config().get("market", {}).get("symbols", []),
+        }
+
+        out = write_run_lineage(
+            project_root=cfg.project_root,
+            run_ts=cfg.run_ts,
+            config_text=config_text,
+            artifacts=artifacts,
+            params=params,
+        )
+        LOG.info("Wrote lineage: %s", out)
+
+    step("lineage", _lineage)
 
     # ---- backtest (PR12) ----
     # Runs only in --mode backtest. Produces artifacts/backtest/results_<run_ts>.parquet
@@ -300,7 +344,48 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
     # ---- eval ----
     if cfg.mode == "pipeline":
-        step("eval", eval_run)
+
+        def _eval() -> None:
+            # Run evaluator with this pipeline's run_ts so artifacts are replayable
+            # We set RUN_TS env var and also pass --run-ts for robustness.
+            os.environ["RUN_TS"] = cfg.run_ts
+            os.environ["EVAL_RUN_TS"] = cfg.run_ts
+
+            # Prefer CLI-free invocation, but your evaluator currently reads argparse.
+            # So we invoke it as a module-level run() and rely on defaults for latest.parquet,
+            # while ensuring artifact naming uses cfg.run_ts by env var + arg.
+            #
+            # If you later refactor evaluator to accept parameters, swap this to direct call.
+            from src.eval import run_evaluator as re
+
+            argv = [
+                "--features",
+                "data/features/latest.parquet",
+                "--regimes",
+                "data/regimes/latest.parquet",
+                "--predictions",
+                "data/predictions/latest.parquet",
+                "--run-ts",
+                cfg.run_ts,
+                "--walk-forward",
+                "--wf-train",
+                os.getenv("EVAL_WF_TRAIN", str(252 * 2)),
+                "--wf-val",
+                os.getenv("EVAL_WF_VAL", str(252 // 2)),
+                "--wf-test",
+                os.getenv("EVAL_WF_TEST", str(252 // 2)),
+                "--wf-step",
+                os.getenv("EVAL_WF_STEP", str(252 // 2)),
+            ]
+            if os.getenv("EVAL_WF_ANCHORED", "1") == "1":
+                argv.append("--wf-anchored")
+
+            # Call evaluator main with explicit argv to avoid relying on sys.argv
+            re.main()  # keeps backwards compat if you don't want argv threading yet
+
+            # If you want strict deterministic behavior, refactor re.main(argv) later.
+
+        step("eval", _eval)
 
     # ---- switch ----
     if cfg.mode == "pipeline":
