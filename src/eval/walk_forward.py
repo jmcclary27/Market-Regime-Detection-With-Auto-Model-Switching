@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Sequence
 
 import pandas as pd
 
@@ -71,7 +71,6 @@ def walk_forward_splits(
     # train: [0, train_size)
     # val:   [train_size, train_size+val_size)
     # test:  [train_size+val_size, train_size+val_size+test_size)
-    start_train = 0
     start_val = train_size
     start_test = train_size + val_size
 
@@ -93,7 +92,9 @@ def walk_forward_splits(
         test_stop = test_start + test_size
 
         # Defensive sanity, though loop condition should ensure this.
-        if not (0 <= train_start < train_stop <= val_start < val_stop <= test_start < test_stop <= n):
+        if not (
+            0 <= train_start < train_stop <= val_start < val_stop <= test_start < test_stop <= n
+        ):
             raise RuntimeError("Invalid split construction, please report")
 
         splits.append(

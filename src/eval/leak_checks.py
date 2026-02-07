@@ -54,7 +54,9 @@ def assert_log_return_1_no_future_leak(
 
     max_abs_err = float(np.max(np.abs(expected.to_numpy()[mask] - actual.to_numpy()[mask])))
     if max_abs_err > tol:
-        raise AssertionError(f"log_return_1 mismatch vs shift(1) definition, max_abs_err={max_abs_err}")
+        raise AssertionError(
+            f"log_return_1 mismatch vs shift(1) definition, max_abs_err={max_abs_err}"
+        )
 
 
 def assert_sma_10_is_backward_looking(

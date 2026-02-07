@@ -1,11 +1,15 @@
 # tests/test_pipeline_replay.py
 from __future__ import annotations
 
-import pytest
 import subprocess
 from pathlib import Path
 
-from src.pipeline.run import _sha256_file  # ok since it's your module, or copy a tiny hasher in test
+import pytest
+
+from src.pipeline.run import (
+    _sha256_file,  # ok since it's your module, or copy a tiny hasher in test
+)
+
 
 @pytest.mark.integration
 def test_pipeline_replay_is_deterministic(tmp_path: Path) -> None:

@@ -27,8 +27,12 @@ def test_leak_checks_pass_on_feature_builder_output() -> None:
     feat = build_features(bars)
 
     assert_monotonic_by_symbol(feat, timestamp_col="timestamp", symbol_col="symbol")
-    assert_log_return_1_no_future_leak(feat, close_col="close", symbol_col="symbol", logret_col="log_return_1")
-    assert_sma_10_is_backward_looking(feat, close_col="close", symbol_col="symbol", sma_col="sma_10", window=10)
+    assert_log_return_1_no_future_leak(
+        feat, close_col="close", symbol_col="symbol", logret_col="log_return_1"
+    )
+    assert_sma_10_is_backward_looking(
+        feat, close_col="close", symbol_col="symbol", sma_col="sma_10", window=10
+    )
 
 
 def test_leak_check_catches_future_shift_in_log_return() -> None:
@@ -50,7 +54,9 @@ def test_leak_check_catches_future_shift_in_log_return() -> None:
     feat_bad["log_return_1"] = np.log(next_close / feat_bad["close"])
 
     with pytest.raises(AssertionError):
-        assert_log_return_1_no_future_leak(feat_bad, close_col="close", symbol_col="symbol", logret_col="log_return_1")
+        assert_log_return_1_no_future_leak(
+            feat_bad, close_col="close", symbol_col="symbol", logret_col="log_return_1"
+        )
 
 
 def test_leak_check_catches_centered_sma() -> None:
@@ -75,4 +81,6 @@ def test_leak_check_catches_centered_sma() -> None:
     )
 
     with pytest.raises(AssertionError):
-        assert_sma_10_is_backward_looking(feat_bad, close_col="close", symbol_col="symbol", sma_col="sma_10", window=10)
+        assert_sma_10_is_backward_looking(
+            feat_bad, close_col="close", symbol_col="symbol", sma_col="sma_10", window=10
+        )

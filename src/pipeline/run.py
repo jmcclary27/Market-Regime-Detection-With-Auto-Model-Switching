@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import pandas as pd
 
@@ -86,7 +86,8 @@ def _load_lineage(project_root: Path, run_ts: str) -> dict[str, Any]:
     p = project_root / "artifacts" / "lineage" / f"lineage_{run_ts}.json"
     if not p.exists():
         raise FileNotFoundError(f"Missing lineage file: {p}")
-    return json.loads(p.read_text(encoding="utf-8"))
+    data = json.loads(p.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], data)
 
 
 def _resolve_path(project_root: Path, p: str) -> Path:
@@ -123,7 +124,9 @@ def _semantic_pred_compare(old_p: Path, new_p: Path) -> None:
     b2 = b[need].sort_values(key, kind="mergesort").reset_index(drop=True)
 
     if not a2[key].equals(b2[key]):
-        raise AssertionError("Replay compare failed, prediction keys differ (row_id/model_name/...)")
+        raise AssertionError(
+            "Replay compare failed, prediction keys differ (row_id/model_name/...)"
+        )
 
     diff = (a2["y_pred"] - b2["y_pred"]).abs().max()
     if pd.isna(diff):
@@ -135,7 +138,9 @@ def _semantic_pred_compare(old_p: Path, new_p: Path) -> None:
 # -------------------------
 # Pipeline
 # -------------------------
-def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | None = None) -> None:
+def run_pipeline(
+    cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | None = None
+) -> None:
     LOG.info("Pipeline run started, run_ts=%s mode=%s replay=%s", cfg.run_ts, cfg.mode, replay)
 
     lineage: dict[str, Any] | None = None
@@ -283,7 +288,6 @@ def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | 
 
         predictions_parquet = dst
 
-
     step("predict", _predict)
 
     # ---- lineage ----
@@ -336,7 +340,6 @@ def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | 
             LOG.exception("Lineage MLflow logging failed")
 
         LOG.info("Wrote lineage: %s", out)
-
 
     if replay:
         LOG.info("Replay enabled, skipping lineage step")
@@ -523,7 +526,9 @@ def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run full local pipeline")
-    p.add_argument("--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z")
+    p.add_argument(
+        "--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z"
+    )
     p.add_argument(
         "--mode",
         default="pipeline",
