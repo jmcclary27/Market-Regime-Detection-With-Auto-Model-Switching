@@ -89,6 +89,11 @@ def main() -> None:
         action="store_true",
         help="If set, compute per-split metrics on the test window using walk-forward splits.",
     )
+    ap.add_argument(
+        "--run-ts",
+        default=None,
+        help="If set, use this id for artifact naming (recommended for pipeline replay).",
+    )
     ap.add_argument("--wf-train", type=int, default=252 * 2, help="Train window size in bars.")
     ap.add_argument("--wf-val", type=int, default=252 // 2, help="Validation window size in bars.")
     ap.add_argument("--wf-test", type=int, default=252 // 2, help="Test window size in bars.")
@@ -120,7 +125,7 @@ def main() -> None:
 
     # Base, full-period metrics and scorecard (existing behavior)
     metrics_tbl = compute_metrics_table(eval_df, cfg=cfg)
-    ts = make_timestamp_id()
+    ts = str(args.run_ts) if args.run_ts else make_timestamp_id()
     scorecard = build_scorecard(
         eval_df,
         cfg=cfg,

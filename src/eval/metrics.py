@@ -281,6 +281,7 @@ def build_scorecard(
 
     scorecard: dict[str, Any] = {
         "timestamp": timestamp,
+        "run_ts": timestamp,
         "data": {
             "features_path": str(features_path),
             "regimes_path": str(regimes_path),
