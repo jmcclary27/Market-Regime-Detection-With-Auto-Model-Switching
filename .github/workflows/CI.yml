@@ -35,5 +35,24 @@ jobs:
       - name: Mypy (type check) in container
         run: docker run --rm market-regime:ci sh -lc "mypy src tests"
 
-      - name: Pytest in container
-        run: docker run --rm market-regime:ci test
+      - name: Pytest (unit tests) in container
+        run: docker run --rm market-regime:ci sh -lc "pytest -m 'not integration'"
+
+  replay-determinism:
+    runs-on: ubuntu-latest
+    needs: docker-quality-checks
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: market-regime:ci
+
+      - name: Replay determinism test
+        run: docker run --rm market-regime:ci sh -lc "pytest -m integration"

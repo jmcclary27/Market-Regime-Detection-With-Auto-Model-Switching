@@ -23,6 +23,7 @@ class BatchPredictConfig:
     runs_dir: Path = Path("data/runs")
     target_col: str = "target"
     active_file: Path | None = None
+    inference_ts: int | None = None
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
@@ -219,7 +220,7 @@ def _drop_nan_rows(X: pd.DataFrame, row_ids: pd.Index) -> tuple[pd.DataFrame, pd
 
 
 def run(config: BatchPredictConfig) -> Path:
-    ts = int(time.time())
+    ts = int(config.inference_ts) if config.inference_ts is not None else int(time.time())
 
     if not config.features_path.exists():
         raise FileNotFoundError(f"Features file not found: {config.features_path}")
@@ -451,6 +452,7 @@ def run_stage(
     models_dir: Path = Path("models"),
     output_dir: Path = Path("data/predictions"),
     runs_dir: Path = Path("data/runs"),
+    inference_ts: int | None = None,
 ) -> Path:
     """
     Orchestration-friendly entrypoint (PR 9).
@@ -464,6 +466,7 @@ def run_stage(
         runs_dir=runs_dir,
         target_col=target_col,
         active_file=active_file,
+        inference_ts=inference_ts,
     )
     return run(cfg)
 
