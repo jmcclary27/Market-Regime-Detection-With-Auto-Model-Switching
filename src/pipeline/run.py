@@ -259,18 +259,30 @@ def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | 
         if regimes_parquet is None:
             raise RuntimeError("regimes_parquet not set")
 
-        predictions_parquet = predict_run(features_path=regimes_parquet, inference_ts=run_ts_to_int(cfg.run_ts))
+        predictions_parquet = predict_run(
+            features_path=regimes_parquet,
+            inference_ts=run_ts_to_int(cfg.run_ts),
+        )
 
         # Ensure deterministic naming in data/predictions for this pipeline run_ts
         out_dir = cfg.project_root / "data" / "predictions"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        dst = out_dir / f"predictions_{cfg.run_ts}.parquet"
         # Always write a fresh copy (even if predict_run already wrote something)
         dfp = pd.read_parquet(predictions_parquet)
-        dfp.to_parquet(dst, index=False)
-        dfp.to_parquet(out_dir / "latest.parquet", index=False)
+
+        if replay:
+            # IMPORTANT: do NOT overwrite the recorded predictions_<run_ts>.parquet during replay
+            dst = out_dir / f"predictions_replay_{cfg.run_ts}.parquet"
+            dfp.to_parquet(dst, index=False)
+            # also do not touch latest.parquet during replay
+        else:
+            dst = out_dir / f"predictions_{cfg.run_ts}.parquet"
+            dfp.to_parquet(dst, index=False)
+            dfp.to_parquet(out_dir / "latest.parquet", index=False)
+
         predictions_parquet = dst
+
 
     step("predict", _predict)
 
@@ -300,6 +312,7 @@ def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | 
             "features_parquet": features_parquet,
             "features_manifest": features_manifest,
             "regimes_parquet": regimes_parquet,
+            # in non-replay mode this is the canonical predictions_<run_ts>.parquet
             "predictions_parquet": predictions_parquet,
         }
         params = {
@@ -324,24 +337,46 @@ def run_pipeline(cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | 
 
         LOG.info("Wrote lineage: %s", out)
 
-    step("lineage", _lineage)
+
+    if replay:
+        LOG.info("Replay enabled, skipping lineage step")
+    else:
+        step("lineage", _lineage)
 
     # ---- replay verification ----
     if replay:
+
         def _replay_verify() -> None:
             assert lineage is not None
 
             # verify recorded artifacts are still the same bytes
-            for label in ("raw_csv", "features_parquet", "features_manifest", "regimes_parquet", "predictions_parquet"):
+            # (these should NOT be rewritten during replay)
+            for label in (
+                "raw_csv",
+                "features_parquet",
+                "features_manifest",
+                "regimes_parquet",
+                "predictions_parquet",
+            ):
                 rec = lineage["artifacts"][label]
                 p = _resolve_path(cfg.project_root, rec["path"])
                 _assert_sha256(p, rec["sha256"], label=label)
 
-            # semantic compare predictions: lineage predictions vs newly produced predictions_<cfg.run_ts>.parquet
-            old_preds = _resolve_path(cfg.project_root, lineage["artifacts"]["predictions_parquet"]["path"])
+            # semantic compare predictions: recorded predictions vs newly produced replay predictions
+            old_preds = _resolve_path(
+                cfg.project_root, lineage["artifacts"]["predictions_parquet"]["path"]
+            )
             new_preds = predictions_parquet
             if new_preds is None:
                 raise RuntimeError("predictions_parquet not set")
+
+            # replay output must match recorded bytes too
+            _assert_sha256(
+                new_preds,
+                lineage["artifacts"]["predictions_parquet"]["sha256"],
+                label="predictions_parquet(replay_output)",
+            )
+
             _semantic_pred_compare(old_preds, new_preds)
 
             LOG.info("Replay verification passed")

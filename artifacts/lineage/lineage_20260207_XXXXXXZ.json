@@ -22,7 +22,7 @@
     }
   },
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
-  "git_commit": "d85558d01280dffefc30f2d8076e4de483b89ea2",
+  "git_commit": "22091056c3acd20542eb2fbe2c0f38d2fdbeda85",
   "params": {
     "market_symbols": [
       "SPY",
