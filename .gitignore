@@ -82,3 +82,6 @@ airflow/webserver_config.py
 # Model Planning
 ############################
 model_future.txt
+
+# Testing
+localCI.yml
