@@ -84,4 +84,5 @@ airflow/webserver_config.py
 model_future.txt
 
 # Testing
-localCI.yml
+.github/workflows/localCI.yml
+tests/test_pipeline_replay.py
