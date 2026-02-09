@@ -1,23 +1,23 @@
 {
   "artifacts": {
     "features_manifest": {
-      "path": "data\\features\\20260209_212414Z.manifest.json",
-      "sha256": "e6ae4e3b97bb74806a4c60df5a8cd8aeed9887ac1b04600eb70a3571f3b5055b"
+      "path": "data\\features\\20260209_212101Z.manifest.json",
+      "sha256": "915bb4427e8aac381c5dd9fcb7701b55f7ec22f7ab3b0241868b8ce146706a93"
     },
     "features_parquet": {
-      "path": "data\\features\\20260209_212414Z.parquet",
+      "path": "data\\features\\20260209_212101Z.parquet",
       "sha256": "5b8ae4978d745ca60c5b139cfb3cbbcfe72d629b260353470550458886ce43a8"
     },
     "predictions_parquet": {
-      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20260209_212414Z.parquet",
-      "sha256": "49ed34fd40f6f52b08f4db2b0726a5da96576386b6cf5027d2ef891a348e0c3d"
+      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20260209_212101Z.parquet",
+      "sha256": "f5ab41d3f426cfe0625c66f4c3a1b4822520a558da4c5256d25ea5a0844f82d7"
     },
     "raw_csv": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
       "sha256": "c9feda47919ae7e032ed3a599724e66c9a8441716c27a20f48a2c00757af837a"
     },
     "regimes_parquet": {
-      "path": "data\\regimes\\20260209_212414Z.parquet",
+      "path": "data\\regimes\\20260209_212101Z.parquet",
       "sha256": "ebe3c166163e92d4b9da4ed66b023d23ab32bb7cb5d2a18a985c65b62dea118d"
     }
   },
@@ -30,5 +30,5 @@
     ],
     "mode": "backtest"
   },
-  "run_ts": "20260209_212414Z"
+  "run_ts": "20260209_212101Z"
 }
