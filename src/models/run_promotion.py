@@ -2,20 +2,23 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
 from src.models.promotion import PromotionConfig, decide_promotion, summarize_walkforward
 from src.registry.registry import ActiveModelRef, write_active
 
+LOG = logging.getLogger("promotion")
+
 LINEAGE_LATEST = Path("artifacts/lineage/latest.json")
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def _portfolio_metrics_path_for_run(run_ts: str) -> Path:
@@ -27,6 +30,9 @@ def _promotion_out_path_for_run(run_ts: str) -> Path:
 
 
 def _choose_incumbent(wf: pd.DataFrame, preferred: str | None) -> str:
+    if "model_name" not in wf.columns:
+        raise ValueError("walk-forward table missing required column: model_name")
+
     names = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
     if not names:
         raise ValueError("walk-forward table has no model_name values")
@@ -47,10 +53,11 @@ def _choose_challenger(wf: pd.DataFrame, incumbent: str, preferred: str | None) 
     if preferred and preferred in others:
         return preferred
 
-    # default: pick best by mean sharpe across splits
+    # Default heuristic: pick best by mean sharpe across splits, if available.
     tmp = wf.copy()
     tmp["model_name"] = tmp["model_name"].astype(str)
     tmp = tmp[tmp["model_name"].isin(others)]
+
     if "sharpe" not in tmp.columns:
         return others[0]
 
@@ -58,6 +65,7 @@ def _choose_challenger(wf: pd.DataFrame, incumbent: str, preferred: str | None) 
     means = means.replace([float("inf"), float("-inf")], pd.NA).dropna()
     if means.empty:
         return others[0]
+
     return str(means.sort_values(ascending=False).index[0])
 
 
@@ -70,6 +78,14 @@ def run_promotion(
     lineage_path: Path = LINEAGE_LATEST,
     write_pointer: bool = True,
 ) -> dict[str, Any]:
+    """
+    Read latest lineage -> find walkforward portfolio metrics parquet -> decide promotion.
+
+    Visible behavior additions:
+      - structured logging about what was selected and why promotion did/didn't happen
+      - explicit "promoted" boolean + "reason" at the top-level return dict
+      - records what active pointer would be (and if written)
+    """
     cfg = cfg or PromotionConfig()
 
     if not lineage_path.exists():
@@ -86,10 +102,34 @@ def run_promotion(
 
     wf = pd.read_parquet(wf_path)
 
+    if "model_name" not in wf.columns:
+        raise ValueError(
+            f"walk-forward portfolio metrics missing 'model_name'. columns={list(wf.columns)}"
+        )
+
+    available_models = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
+    LOG.info(
+        "Promotion start | run_ts=%s wf_path=%s n_rows=%d n_models=%d",
+        run_ts,
+        wf_path,
+        int(len(wf)),
+        int(len(available_models)),
+    )
+    LOG.info("Promotion available models | %s", available_models)
+
     # ---- robust model selection ----
     incumbent = _choose_incumbent(wf, preferred=incumbent_model_name)
     challenger = _choose_challenger(wf, incumbent=incumbent, preferred=challenger_model_name)
 
+    LOG.info(
+        "Promotion selected | incumbent=%s (preferred=%s) challenger=%s (preferred=%s)",
+        incumbent,
+        incumbent_model_name,
+        challenger,
+        challenger_model_name,
+    )
+
+    # Summaries + decision
     chal = summarize_walkforward(wf, model_name=challenger, cfg=cfg)
     inc = summarize_walkforward(wf, model_name=incumbent, cfg=cfg)
 
@@ -99,19 +139,46 @@ def run_promotion(
         cfg=cfg,
     )
 
-    out = {
+    # A short, human-friendly reason string for logs + top-level output
+    # (fallbacks in case decide_promotion doesn't expose exactly what we expect)
+    reason = getattr(decision, "reason", None)
+    if reason is None:
+        # Try common alternative field names
+        reason = getattr(decision, "message", None)
+    if reason is None:
+        reason = "see decision object"
+
+    promoted = bool(getattr(decision, "promote", False))
+
+    # Build output artifact
+    out: dict[str, Any] = {
         "run_ts": run_ts,
         "git_commit": lineage.get("git_commit"),
         "config_sha256": lineage.get("config_sha256"),
         "challenger_model_name": challenger,
         "incumbent_model_name": incumbent,
+        # Top-level visibility fields
+        "promoted": promoted,
+        "reason": str(reason),
+        "pointer_written": bool(promoted and write_pointer),
+        "challenger_ref": {
+            "model_type": challenger_ref.model_type,
+            "model_id": challenger_ref.model_id,
+            "version": challenger_ref.version,
+            "artifact_path": challenger_ref.artifact_path.as_posix(),
+            "regime": challenger_ref.regime,
+            "metadata_path": challenger_ref.metadata_path.as_posix()
+            if challenger_ref.metadata_path is not None
+            else None,
+        },
+        # Full structured details
         "decision": asdict(decision),
         "promotion_config": asdict(cfg),
         "inputs": {
             "walkforward_metrics": str(wf_path),
             "lineage": str(lineage_path),
         },
-        "available_models": sorted(set(map(str, wf["model_name"].dropna().unique().tolist()))),
+        "available_models": available_models,
     }
 
     out_path = _promotion_out_path_for_run(run_ts)
@@ -119,9 +186,26 @@ def run_promotion(
     out_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
 
     latest_path = Path("data/walkforward/latest_promotion.json")
+    latest_path.parent.mkdir(parents=True, exist_ok=True)
     latest_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
 
-    if decision.promote and write_pointer:
+    # Write pointer if promoted
+    if promoted and write_pointer:
+        LOG.warning(
+            "MODEL PROMOTED | run_ts=%s challenger=%s incumbent=%s -> writing active pointer: %s",
+            run_ts,
+            challenger,
+            incumbent,
+            challenger_ref.artifact_path,
+        )
         write_active(challenger_ref)
+    else:
+        LOG.info(
+            "Model not promoted | run_ts=%s promoted=%s reason=%s",
+            run_ts,
+            promoted,
+            str(reason),
+        )
 
+    LOG.info("Promotion wrote artifact | %s", out_path)
     return out
