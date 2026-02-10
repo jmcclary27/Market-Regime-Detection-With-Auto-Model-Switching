@@ -1,0 +1,57 @@
+{
+  "available_models": [
+    "baseline",
+    "expert_bearish",
+    "expert_bullish",
+    "expert_bullish_ridge_v0",
+    "expert_sideways"
+  ],
+  "challenger_model_name": "expert_bearish",
+  "challenger_ref": {
+    "artifact_path": "models/pretrained/elasticnet/latest.joblib",
+    "metadata_path": null,
+    "model_id": "elasticnet_v0",
+    "model_type": "pretrained",
+    "regime": null,
+    "version": "0"
+  },
+  "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
+  "decision": {
+    "challenger": {
+      "max_drawdown": -5.3338629655508285e-05,
+      "n_folds": NaN,
+      "sharpe": 1.649076245455959
+    },
+    "deltas": {
+      "max_drawdown": 0.28400295228784933,
+      "sharpe": 0.555426763769655
+    },
+    "incumbent": {
+      "max_drawdown": -0.28405629091750484,
+      "n_folds": NaN,
+      "sharpe": 1.093649481686304
+    },
+    "promote": true,
+    "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail"
+  },
+  "git_commit": "8bcfb94f7f5ac86ad0f46a6cb403e980296e3e0a",
+  "incumbent_model_name": "baseline",
+  "inputs": {
+    "lineage": "artifacts\\lineage\\latest.json",
+    "walkforward_metrics": "data\\walkforward\\portfolio_metrics_20990101_000000Z.parquet"
+  },
+  "pointer_written": true,
+  "promoted": true,
+  "promotion_config": {
+    "fold_col": "fold_id",
+    "max_drawdown_threshold": 0.35,
+    "maxdd_agg": "min",
+    "maxdd_col": "max_drawdown",
+    "model_col": "model_name",
+    "require_sharpe_beats_incumbent": true,
+    "sharpe_agg": "mean",
+    "sharpe_col": "sharpe"
+  },
+  "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail",
+  "run_ts": "20990101_000000Z"
+}
