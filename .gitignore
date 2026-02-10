@@ -48,7 +48,10 @@ data/runs/
 data/deployments/
 
 # Models (baseline, experts, pretrained copies)
-models/
+models/baseline
+models/experts
+models/pretrained
+models/regimes
 
 # Registry runtime state
 registry/active_model.yaml
