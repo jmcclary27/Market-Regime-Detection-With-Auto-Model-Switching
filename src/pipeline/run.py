@@ -186,6 +186,8 @@ def run_pipeline(
     features_manifest: Path | None = None
     regimes_parquet: Path | None = None
     predictions_parquet: Path | None = None
+    wf_portfolio_metrics_parquet: Path | None = None
+    promotion_decision_json: Path | None = None
 
     # ---- poll ----
     if not replay:
@@ -500,6 +502,64 @@ def run_pipeline(
             re.main(argv)
 
         step("eval", _eval)
+        
+    if cfg.mode == "pipeline" and not replay:
+
+        def _promotion() -> None:
+            nonlocal wf_portfolio_metrics_parquet, promotion_decision_json
+
+            # Convention: evaluator writes this parquet
+            wf_portfolio_metrics_parquet = (
+                cfg.project_root / "data" / "walkforward" / f"portfolio_metrics_{cfg.run_ts}.parquet"
+            )
+            if not wf_portfolio_metrics_parquet.exists():
+                raise FileNotFoundError(
+                    "Expected walk-forward portfolio metrics not found: "
+                    f"{wf_portfolio_metrics_parquet}. "
+                    "Implement PR14 writer in run_evaluator --walk-forward path."
+                )
+
+            # Run promotion decision + write artifact (and update active pointer if promoted)
+            from src.models.run_promotion import run_promotion
+            from src.registry.registry import read_active, ActiveModelRef
+
+            incumbent = read_active()  # current active pointer
+
+            challenger_model_name = os.getenv("PROMOTION_CHALLENGER_MODEL", "elasticnet_v0")
+            incumbent_model_name = os.getenv("PROMOTION_INCUMBENT_MODEL", "baseline")
+
+            # challenger_ref is what you'd point to if promoted.
+            # In practice you’ll build this from your model zoo registry,
+            # but for now wire it from env until PR14 registry lands.
+            challenger_ref = ActiveModelRef(
+                model_type=str(os.getenv("PROMOTION_CHALLENGER_TYPE", "pretrained")),
+                model_id=str(os.getenv("PROMOTION_CHALLENGER_ID", "elasticnet_v0")),
+                version=str(os.getenv("PROMOTION_CHALLENGER_VERSION", "0")),
+                artifact_path=Path(str(os.getenv("PROMOTION_CHALLENGER_ARTIFACT", "models/pretrained/elasticnet/latest.joblib"))),
+                regime=None,
+                metadata_path=None,
+            )
+
+            out = run_promotion(
+                challenger_model_name=challenger_model_name,
+                incumbent_model_name=incumbent_model_name,
+                challenger_ref=challenger_ref,
+            )
+
+            promotion_decision_json = cfg.project_root / "data" / "walkforward" / f"promotion_{cfg.run_ts}.json"
+            if not promotion_decision_json.exists():
+                # run_promotion writes it, so this is a sanity check
+                raise RuntimeError("promotion decision json was not written as expected")
+
+            # Optional MLflow artifact logging
+            try:
+                if mlflow_obj is not None and mlflow_obj.active_run() is not None:
+                    mlflow_obj.log_artifact(str(promotion_decision_json))
+                    mlflow_obj.log_artifact(str(wf_portfolio_metrics_parquet))
+            except Exception:
+                LOG.exception("Promotion MLflow logging failed")
+
+        step("promotion", _promotion)
 
     # ---- switch ----
     if cfg.mode == "pipeline":
@@ -508,6 +568,57 @@ def run_pipeline(
         else:
             step("switch", switch_run)
 
+    if (not replay) and cfg.mode == "pipeline":
+
+        def _lineage_update() -> None:
+            if raw_latest is None or features_parquet is None or regimes_parquet is None or predictions_parquet is None:
+                raise RuntimeError("base artifacts not set for lineage update")
+
+            config_path = cfg.project_root / "src" / "config" / "settings.yaml"
+            config_text = config_path.read_text(encoding="utf-8")
+
+            if features_manifest is None:
+                raise RuntimeError("features_manifest not set")
+
+            from src.data.lineage import write_run_lineage
+
+            artifacts = {
+                "raw_csv": raw_latest,
+                "features_parquet": features_parquet,
+                "features_manifest": features_manifest,
+                "regimes_parquet": regimes_parquet,
+                "predictions_parquet": predictions_parquet,
+            }
+
+            if wf_portfolio_metrics_parquet is not None and wf_portfolio_metrics_parquet.exists():
+                artifacts["walkforward_portfolio_metrics_parquet"] = wf_portfolio_metrics_parquet
+            if promotion_decision_json is not None and promotion_decision_json.exists():
+                artifacts["promotion_decision_json"] = promotion_decision_json
+
+            params = {
+                "mode": cfg.mode,
+                "market_symbols": load_config().get("market", {}).get("symbols", []),
+            }
+
+            out = write_run_lineage(
+                project_root=cfg.project_root,
+                run_ts=cfg.run_ts,
+                config_text=config_text,
+                artifacts=artifacts,
+                params=params,
+            )
+
+            try:
+                if mlflow_obj is not None and mlflow_obj.active_run() is not None:
+                    mlflow_obj.log_artifact(str(out))
+                    mlflow_obj.set_tag("lineage_path", str(out))
+            except Exception:
+                LOG.exception("Lineage update MLflow logging failed")
+
+            LOG.info("Updated lineage with eval/promotion artifacts: %s", out)
+
+        step("lineage_update", _lineage_update)
+    
     LOG.info(
         "Pipeline run completed, run_ts=%s mode=%s (features=%s, regimes=%s, predictions=%s)",
         cfg.run_ts,
