@@ -1,9 +1,6 @@
 active:
-  model_type: expert
-  regime: bullish
-  model_id: ridge
-  version: 1767565054
-  artifact_path: models/experts/bullish/1767565054/model.joblib
-  metadata_path: models/experts/bullish/1767565054/metadata.json
-
-updated_at: 2026-01-08T19:05:00Z
+  model_type: pretrained
+  model_id: elasticnet_v0
+  version: '0'
+  artifact_path: models/pretrained/elasticnet/latest.joblib
+updated_at: '2026-02-10T16:27:19Z'

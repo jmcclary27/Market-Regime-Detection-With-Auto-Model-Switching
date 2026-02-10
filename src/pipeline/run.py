@@ -1,3 +1,4 @@
+# src/pipeline/run.py
 from __future__ import annotations
 
 import argparse
@@ -106,7 +107,6 @@ def _assert_sha256(path: Path, expected: str, *, label: str) -> None:
 def run_ts_to_int(run_ts: str) -> int:
     # "20260207_123456Z" -> 20260207123456
     digits = "".join(ch for ch in run_ts if ch.isdigit())
-    # keep it bounded but stable
     return int(digits[:14]) if len(digits) >= 14 else int(digits)
 
 
@@ -124,9 +124,7 @@ def _semantic_pred_compare(old_p: Path, new_p: Path) -> None:
     b2 = b[need].sort_values(key, kind="mergesort").reset_index(drop=True)
 
     if not a2[key].equals(b2[key]):
-        raise AssertionError(
-            "Replay compare failed, prediction keys differ (row_id/model_name/...)"
-        )
+        raise AssertionError("Replay compare failed, prediction keys differ (row_id/model_name/...)")
 
     diff = (a2["y_pred"] - b2["y_pred"]).abs().max()
     if pd.isna(diff):
@@ -186,6 +184,8 @@ def run_pipeline(
     features_manifest: Path | None = None
     regimes_parquet: Path | None = None
     predictions_parquet: Path | None = None
+
+    # New in PR14 wiring:
     wf_portfolio_metrics_parquet: Path | None = None
     promotion_decision_json: Path | None = None
 
@@ -271,18 +271,14 @@ def run_pipeline(
             inference_ts=run_ts_to_int(cfg.run_ts),
         )
 
-        # Ensure deterministic naming in data/predictions for this pipeline run_ts
         out_dir = cfg.project_root / "data" / "predictions"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        # Always write a fresh copy (even if predict_run already wrote something)
         dfp = pd.read_parquet(predictions_parquet)
 
         if replay:
-            # IMPORTANT: do NOT overwrite the recorded predictions_<run_ts>.parquet during replay
             dst = out_dir / f"predictions_replay_{cfg.run_ts}.parquet"
             dfp.to_parquet(dst, index=False)
-            # also do not touch latest.parquet during replay
         else:
             dst = out_dir / f"predictions_{cfg.run_ts}.parquet"
             dfp.to_parquet(dst, index=False)
@@ -292,7 +288,7 @@ def run_pipeline(
 
     step("predict", _predict)
 
-    # ---- lineage ----
+    # ---- lineage (base) ----
     def _lineage() -> None:
         nonlocal features_manifest
 
@@ -318,7 +314,6 @@ def run_pipeline(
             "features_parquet": features_parquet,
             "features_manifest": features_manifest,
             "regimes_parquet": regimes_parquet,
-            # in non-replay mode this is the canonical predictions_<run_ts>.parquet
             "predictions_parquet": predictions_parquet,
         }
         params = {
@@ -354,8 +349,6 @@ def run_pipeline(
         def _replay_verify() -> None:
             assert lineage is not None
 
-            # verify recorded artifacts are still the same bytes
-            # (these should NOT be rewritten during replay)
             for label in (
                 "raw_csv",
                 "features_parquet",
@@ -367,7 +360,6 @@ def run_pipeline(
                 p = _resolve_path(cfg.project_root, rec["path"])
                 _assert_sha256(p, rec["sha256"], label=label)
 
-            # semantic compare predictions: recorded predictions vs newly produced replay predictions
             old_preds = _resolve_path(
                 cfg.project_root, lineage["artifacts"]["predictions_parquet"]["path"]
             )
@@ -375,7 +367,6 @@ def run_pipeline(
             if new_preds is None:
                 raise RuntimeError("predictions_parquet not set")
 
-            # replay output must match recorded bytes too
             _assert_sha256(
                 new_preds,
                 lineage["artifacts"]["predictions_parquet"]["sha256"],
@@ -502,13 +493,13 @@ def run_pipeline(
             re.main(argv)
 
         step("eval", _eval)
-        
+
+    # ---- promotion (PR14 wiring) ----
     if cfg.mode == "pipeline" and not replay:
 
         def _promotion() -> None:
             nonlocal wf_portfolio_metrics_parquet, promotion_decision_json
 
-            # Convention: evaluator writes this parquet
             wf_portfolio_metrics_parquet = (
                 cfg.project_root / "data" / "walkforward" / f"portfolio_metrics_{cfg.run_ts}.parquet"
             )
@@ -519,45 +510,50 @@ def run_pipeline(
                     "Implement PR14 writer in run_evaluator --walk-forward path."
                 )
 
-            # Run promotion decision + write artifact (and update active pointer if promoted)
             from src.models.run_promotion import run_promotion
-            from src.registry.registry import read_active, ActiveModelRef
-
-            incumbent = read_active()  # current active pointer
+            from src.registry.registry import ActiveModelRef
 
             challenger_model_name = os.getenv("PROMOTION_CHALLENGER_MODEL", "elasticnet_v0")
             incumbent_model_name = os.getenv("PROMOTION_INCUMBENT_MODEL", "baseline")
 
-            # challenger_ref is what you'd point to if promoted.
-            # In practice you’ll build this from your model zoo registry,
-            # but for now wire it from env until PR14 registry lands.
             challenger_ref = ActiveModelRef(
                 model_type=str(os.getenv("PROMOTION_CHALLENGER_TYPE", "pretrained")),
-                model_id=str(os.getenv("PROMOTION_CHALLENGER_ID", "elasticnet_v0")),
+                model_id=str(os.getenv("PROMOTION_CHALLENGER_ID", challenger_model_name)),
                 version=str(os.getenv("PROMOTION_CHALLENGER_VERSION", "0")),
-                artifact_path=Path(str(os.getenv("PROMOTION_CHALLENGER_ARTIFACT", "models/pretrained/elasticnet/latest.joblib"))),
+                artifact_path=Path(
+                    str(
+                        os.getenv(
+                            "PROMOTION_CHALLENGER_ARTIFACT",
+                            "models/pretrained/elasticnet/latest.joblib",
+                        )
+                    )
+                ),
                 regime=None,
                 metadata_path=None,
             )
 
+            # PATCH: pass the resolved variables (not the raw env lookups)
             out = run_promotion(
                 challenger_model_name=challenger_model_name,
                 incumbent_model_name=incumbent_model_name,
                 challenger_ref=challenger_ref,
             )
 
-            promotion_decision_json = cfg.project_root / "data" / "walkforward" / f"promotion_{cfg.run_ts}.json"
+            promotion_decision_json = (
+                cfg.project_root / "data" / "walkforward" / f"promotion_{cfg.run_ts}.json"
+            )
             if not promotion_decision_json.exists():
-                # run_promotion writes it, so this is a sanity check
                 raise RuntimeError("promotion decision json was not written as expected")
 
-            # Optional MLflow artifact logging
             try:
                 if mlflow_obj is not None and mlflow_obj.active_run() is not None:
                     mlflow_obj.log_artifact(str(promotion_decision_json))
                     mlflow_obj.log_artifact(str(wf_portfolio_metrics_parquet))
             except Exception:
                 LOG.exception("Promotion MLflow logging failed")
+
+            # keep 'out' referenced to avoid “assigned but unused” in some linters
+            _ = out
 
         step("promotion", _promotion)
 
@@ -568,10 +564,16 @@ def run_pipeline(
         else:
             step("switch", switch_run)
 
+    # ---- lineage update to include eval/promotion artifacts ----
     if (not replay) and cfg.mode == "pipeline":
 
         def _lineage_update() -> None:
-            if raw_latest is None or features_parquet is None or regimes_parquet is None or predictions_parquet is None:
+            if (
+                raw_latest is None
+                or features_parquet is None
+                or regimes_parquet is None
+                or predictions_parquet is None
+            ):
                 raise RuntimeError("base artifacts not set for lineage update")
 
             config_path = cfg.project_root / "src" / "config" / "settings.yaml"
@@ -582,7 +584,7 @@ def run_pipeline(
 
             from src.data.lineage import write_run_lineage
 
-            artifacts = {
+            artifacts: dict[str, Path] = {
                 "raw_csv": raw_latest,
                 "features_parquet": features_parquet,
                 "features_manifest": features_manifest,
@@ -618,7 +620,7 @@ def run_pipeline(
             LOG.info("Updated lineage with eval/promotion artifacts: %s", out)
 
         step("lineage_update", _lineage_update)
-    
+
     LOG.info(
         "Pipeline run completed, run_ts=%s mode=%s (features=%s, regimes=%s, predictions=%s)",
         cfg.run_ts,
@@ -637,18 +639,14 @@ def run_pipeline(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run full local pipeline")
-    p.add_argument(
-        "--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z"
-    )
+    p.add_argument("--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z")
     p.add_argument(
         "--mode",
         default="pipeline",
         choices=("pipeline", "backtest"),
         help="pipeline runs eval+switch, backtest runs backtest step and skips eval+switch.",
     )
-    p.add_argument(
-        "-v", "--verbose", action="count", default=0, help="Increase verbosity (-v, -vv)"
-    )
+    p.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v, -vv)")
     p.add_argument(
         "--replay",
         default=None,
@@ -663,7 +661,6 @@ def main(argv: list[str] | None = None) -> int:
     cfg = build_config(args)
 
     if args.replay:
-        # run_ts becomes the *replayed* run id, so all produced artifacts are tagged with it
         cfg = PipelineConfig(
             project_root=cfg.project_root,
             data_dir=cfg.data_dir,
