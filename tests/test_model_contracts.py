@@ -4,7 +4,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-
 EXPECTED_COLS = [
     "row_id",
     "model_name",
@@ -109,8 +108,7 @@ def test_model_path_constant_per_model() -> None:
     counts = df.groupby("model_name", sort=False)["model_path"].nunique(dropna=False)
     bad = counts[counts != 1]
     assert len(bad) == 0, (
-        "model_path must be constant per model_name.\n"
-        f"Violations:\n{bad.to_string()}"
+        f"model_path must be constant per model_name.\nViolations:\n{bad.to_string()}"
     )
 
 
@@ -138,20 +136,34 @@ def test_active_pointer_consistency() -> None:
     # At most 1 active model per row_id
     per_row_counts = active.groupby("row_id", sort=False).size()
     bad_rows = per_row_counts[per_row_counts > 1]
-    assert len(bad_rows) == 0, f"multiple active models found for row_id(s): {bad_rows.index.tolist()[:10]}"
+    assert len(bad_rows) == 0, (
+        f"multiple active models found for row_id(s): {bad_rows.index.tolist()[:10]}"
+    )
 
     # active_model_type must be filled + valid
-    assert active["active_model_type"].notna().all(), "active_model_type must be non-null for active rows"
-    bad_types = sorted(set(active["active_model_type"].astype(str).str.lower()) - ALLOWED_ACTIVE_TYPES)
+    assert active["active_model_type"].notna().all(), (
+        "active_model_type must be non-null for active rows"
+    )
+    bad_types = sorted(
+        set(active["active_model_type"].astype(str).str.lower()) - ALLOWED_ACTIVE_TYPES
+    )
     assert not bad_types, f"unexpected active_model_type values: {bad_types}"
 
     # active_model_id/version must be filled
-    assert active["active_model_id"].notna().all(), "active_model_id must be non-null for active rows"
-    assert active["active_model_version"].notna().all(), "active_model_version must be non-null for active rows"
+    assert active["active_model_id"].notna().all(), (
+        "active_model_id must be non-null for active rows"
+    )
+    assert active["active_model_version"].notna().all(), (
+        "active_model_version must be non-null for active rows"
+    )
 
     # active_regime rules: required only if expert
     is_expert = active["active_model_type"].astype(str).str.lower() == "expert"
     if is_expert.any():
-        assert active.loc[is_expert, "active_regime"].notna().all(), "active_regime must be set for expert"
+        assert active.loc[is_expert, "active_regime"].notna().all(), (
+            "active_regime must be set for expert"
+        )
     if (~is_expert).any():
-        assert active.loc[~is_expert, "active_regime"].isna().all(), "active_regime must be null if not expert"
+        assert active.loc[~is_expert, "active_regime"].isna().all(), (
+            "active_regime must be null if not expert"
+        )

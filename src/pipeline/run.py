@@ -124,7 +124,9 @@ def _semantic_pred_compare(old_p: Path, new_p: Path) -> None:
     b2 = b[need].sort_values(key, kind="mergesort").reset_index(drop=True)
 
     if not a2[key].equals(b2[key]):
-        raise AssertionError("Replay compare failed, prediction keys differ (row_id/model_name/...)")
+        raise AssertionError(
+            "Replay compare failed, prediction keys differ (row_id/model_name/...)"
+        )
 
     diff = (a2["y_pred"] - b2["y_pred"]).abs().max()
     if pd.isna(diff):
@@ -501,7 +503,10 @@ def run_pipeline(
             nonlocal wf_portfolio_metrics_parquet, promotion_decision_json
 
             wf_portfolio_metrics_parquet = (
-                cfg.project_root / "data" / "walkforward" / f"portfolio_metrics_{cfg.run_ts}.parquet"
+                cfg.project_root
+                / "data"
+                / "walkforward"
+                / f"portfolio_metrics_{cfg.run_ts}.parquet"
             )
             if not wf_portfolio_metrics_parquet.exists():
                 raise FileNotFoundError(
@@ -639,14 +644,18 @@ def run_pipeline(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run full local pipeline")
-    p.add_argument("--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z")
+    p.add_argument(
+        "--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z"
+    )
     p.add_argument(
         "--mode",
         default="pipeline",
         choices=("pipeline", "backtest"),
         help="pipeline runs eval+switch, backtest runs backtest step and skips eval+switch.",
     )
-    p.add_argument("-v", "--verbose", action="count", default=0, help="Increase verbosity (-v, -vv)")
+    p.add_argument(
+        "-v", "--verbose", action="count", default=0, help="Increase verbosity (-v, -vv)"
+    )
     p.add_argument(
         "--replay",
         default=None,

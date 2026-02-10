@@ -12,6 +12,10 @@
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20990101_000000Z.parquet",
       "sha256": "0f4f93abe3f824616e71f59c712252b072f4affdafd40cc18ee45d93b80d5ee8"
     },
+    "promotion_decision_json": {
+      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\walkforward\\promotion_20990101_000000Z.json",
+      "sha256": "15a37f13c58e592310cafdec8e1a734ee6c7bc030fdc985bf1051e2610f52fe9"
+    },
     "raw_csv": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
       "sha256": "c9feda47919ae7e032ed3a599724e66c9a8441716c27a20f48a2c00757af837a"
@@ -19,10 +23,14 @@
     "regimes_parquet": {
       "path": "data\\regimes\\20990101_000000Z.parquet",
       "sha256": "ebe3c166163e92d4b9da4ed66b023d23ab32bb7cb5d2a18a985c65b62dea118d"
+    },
+    "walkforward_portfolio_metrics_parquet": {
+      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\walkforward\\portfolio_metrics_20990101_000000Z.parquet",
+      "sha256": "47992f9a09eccdd346e4f41394dc7fa45563521a4c083d60b9e6744df762dd1a"
     }
   },
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
-  "git_commit": "484d4786a49b92bbc3ed6a4d9142590b61b7a0dc",
+  "git_commit": "8bcfb94f7f5ac86ad0f46a6cb403e980296e3e0a",
   "params": {
     "market_symbols": [
       "SPY",

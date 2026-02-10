@@ -226,7 +226,9 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     eval_df_sorted = _ensure_time_sorted(eval_df, features)
-    market_ts = pd.to_datetime(_extract_market_time(eval_df_sorted, features), utc=True, errors="raise")
+    market_ts = pd.to_datetime(
+        _extract_market_time(eval_df_sorted, features), utc=True, errors="raise"
+    )
 
     splits = walk_forward_splits(
         market_ts,
