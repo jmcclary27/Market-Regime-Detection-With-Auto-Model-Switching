@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import mlflow
 import numpy as np
@@ -84,9 +84,15 @@ def _parse_args() -> TrainConfig:
     p.add_argument("--d", type=int, default=0)
     p.add_argument("--q", type=int, default=1)
     p.add_argument("--trend", default="c", choices=["n", "c", "t", "ct"])
-    p.add_argument("--refit-interval", type=int, default=10, help="Refit every N steps during walk-forward.")
-    p.add_argument("--train-window", type=int, default=None, help="Optional rolling window length, e.g. 252.")
-    p.add_argument("--min-train-size", type=int, default=60, help="Minimum points required before first fit.")
+    p.add_argument(
+        "--refit-interval", type=int, default=10, help="Refit every N steps during walk-forward."
+    )
+    p.add_argument(
+        "--train-window", type=int, default=None, help="Optional rolling window length, e.g. 252."
+    )
+    p.add_argument(
+        "--min-train-size", type=int, default=60, help="Minimum points required before first fit."
+    )
 
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--mlflow-tracking-uri", default=None)
@@ -248,7 +254,7 @@ def _walk_forward_arima(
     preds: list[float] = []
     n_refits = 0
     n_fail = 0
-    last_fit_i = -10**9
+    last_fit_i = -(10**9)
     last_result: Any | None = None
 
     for i, y_true in enumerate(y_future):
@@ -389,7 +395,12 @@ def main() -> None:
         def _finite_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
             m = np.isfinite(y_true) & np.isfinite(y_pred)
             if not np.any(m):
-                return {"mse": float("nan"), "rmse": float("nan"), "mae": float("nan"), "r2": float("nan")}
+                return {
+                    "mse": float("nan"),
+                    "rmse": float("nan"),
+                    "mae": float("nan"),
+                    "r2": float("nan"),
+                }
             return _metrics(y_true[m], y_pred[m])
 
         val_metrics = _finite_metrics(y_val, val_pred)

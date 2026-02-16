@@ -14,7 +14,7 @@
     },
     "promotion_decision_json": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\walkforward\\promotion_20990101_000000Z.json",
-      "sha256": "15a37f13c58e592310cafdec8e1a734ee6c7bc030fdc985bf1051e2610f52fe9"
+      "sha256": "6cf4049de0a5f1d8b703f643d4df3b0d8e7295acbfea21c3864afba3ee2d0cb4"
     },
     "raw_csv": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
@@ -30,7 +30,7 @@
     }
   },
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
-  "git_commit": "8bcfb94f7f5ac86ad0f46a6cb403e980296e3e0a",
+  "git_commit": "435445f44703481321fd6baa536bfcc5eedf8c83",
   "params": {
     "market_symbols": [
       "SPY",
