@@ -89,3 +89,4 @@ model_future.txt
 # Testing
 .github/workflows/localCI.yml
 tests/test_pipeline_replay.py
+tests/test_model_contracts.py
