@@ -8,6 +8,7 @@ types-PyYAML
 hmmlearn
 joblib
 lightgbm
+statsmodels>=0.14,<0.15
 
 # Market Dependencies
 yfinance

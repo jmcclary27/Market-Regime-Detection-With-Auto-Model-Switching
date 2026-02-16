@@ -34,7 +34,7 @@
     "promote": true,
     "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail"
   },
-  "git_commit": "8bcfb94f7f5ac86ad0f46a6cb403e980296e3e0a",
+  "git_commit": "435445f44703481321fd6baa536bfcc5eedf8c83",
   "incumbent_model_name": "baseline",
   "inputs": {
     "lineage": "artifacts\\lineage\\latest.json",
