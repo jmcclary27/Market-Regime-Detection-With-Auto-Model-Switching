@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import joblib
 import pandas as pd
+from numpy.typing import NDArray
 
 from src.registry.registry import ACTIVE_FILE, RegistryError, load_active_model
 
@@ -56,7 +57,11 @@ def _walk_forward_arima_predict(
     from statsmodels.tsa.arima.model import ARIMA
 
     y_arr = y.to_numpy(dtype=float)
-    preds = np.full(len(y_arr), fallback, dtype=float)
+    preds: NDArray[np.float64] = np.full(
+        shape=len(y_arr),
+        fill_value=float(fallback),
+        dtype=np.float64,
+    )
 
     history: list[float] = []
     last_fit_i = -(10**9)
