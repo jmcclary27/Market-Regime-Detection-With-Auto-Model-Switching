@@ -3,4 +3,4 @@ active:
   model_id: elasticnet_v0
   version: '0'
   artifact_path: models/pretrained/elasticnet/latest.joblib
-updated_at: '2026-02-16T15:49:08Z'
+updated_at: '2026-02-17T18:02:05Z'

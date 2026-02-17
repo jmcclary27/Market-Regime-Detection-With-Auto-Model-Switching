@@ -1,6 +1,9 @@
 {
   "available_models": [
     "baseline",
+    "expert_arima_bearish",
+    "expert_arima_bullish",
+    "expert_arima_sideways",
     "expert_bearish",
     "expert_bullish",
     "expert_bullish_ridge_v0",
@@ -18,23 +21,23 @@
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
   "decision": {
     "challenger": {
-      "max_drawdown": -5.3338629655508285e-05,
+      "max_drawdown": -5.4331711457744625e-05,
       "n_folds": NaN,
-      "sharpe": 1.649076245455959
+      "sharpe": 1.7095992513735918
     },
     "deltas": {
-      "max_drawdown": 0.28400295228784933,
-      "sharpe": 0.555426763769655
+      "max_drawdown": 0.2840019592060469,
+      "sharpe": 0.324635493981108
     },
     "incumbent": {
-      "max_drawdown": -0.28405629091750484,
+      "max_drawdown": -0.2840562909175046,
       "n_folds": NaN,
-      "sharpe": 1.093649481686304
+      "sharpe": 1.3849637573924838
     },
     "promote": true,
     "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail"
   },
-  "git_commit": "435445f44703481321fd6baa536bfcc5eedf8c83",
+  "git_commit": "4654179865ded106b9689194fa24ee38b014c580",
   "incumbent_model_name": "baseline",
   "inputs": {
     "lineage": "artifacts\\lineage\\latest.json",

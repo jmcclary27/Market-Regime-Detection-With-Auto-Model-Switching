@@ -6,15 +6,15 @@
     },
     "features_parquet": {
       "path": "data\\features\\20990101_000000Z.parquet",
-      "sha256": "5b8ae4978d745ca60c5b139cfb3cbbcfe72d629b260353470550458886ce43a8"
+      "sha256": "494148d29589d590900955767e51b85166eb21d33f976ab5b9fbaa7ed7c8891d"
     },
     "predictions_parquet": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20990101_000000Z.parquet",
-      "sha256": "0f4f93abe3f824616e71f59c712252b072f4affdafd40cc18ee45d93b80d5ee8"
+      "sha256": "c3ceb09e2ea3bf0f023dceae15e3c1d7390e681cd32e184566c073c01567588c"
     },
     "promotion_decision_json": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\walkforward\\promotion_20990101_000000Z.json",
-      "sha256": "6cf4049de0a5f1d8b703f643d4df3b0d8e7295acbfea21c3864afba3ee2d0cb4"
+      "sha256": "0048d9483b429679d72ba696d765be114736f1d4a893b3ad284b7dc7c81d1f91"
     },
     "raw_csv": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
@@ -22,15 +22,15 @@
     },
     "regimes_parquet": {
       "path": "data\\regimes\\20990101_000000Z.parquet",
-      "sha256": "ebe3c166163e92d4b9da4ed66b023d23ab32bb7cb5d2a18a985c65b62dea118d"
+      "sha256": "a4c1a17ae4c0ecf0e0c824b9523dc288b76c482440438cd41ccdb0878b0a4b00"
     },
     "walkforward_portfolio_metrics_parquet": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\walkforward\\portfolio_metrics_20990101_000000Z.parquet",
-      "sha256": "47992f9a09eccdd346e4f41394dc7fa45563521a4c083d60b9e6744df762dd1a"
+      "sha256": "6a5eaffc6a58a659914e7195a6e71b9ce59f363719217800c3d0bc4dcf1b4999"
     }
   },
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
-  "git_commit": "435445f44703481321fd6baa536bfcc5eedf8c83",
+  "git_commit": "4654179865ded106b9689194fa24ee38b014c580",
   "params": {
     "market_symbols": [
       "SPY",

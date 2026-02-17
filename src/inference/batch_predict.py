@@ -7,7 +7,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import joblib
 import pandas as pd
@@ -33,6 +33,73 @@ def _latest_timestamp_dir(parent: Path) -> Path:
     return max(candidates, key=lambda p: int(p.name))
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], data)
+
+
+def _walk_forward_arima_predict(
+    y: pd.Series,
+    *,
+    order: tuple[int, int, int],
+    trend: str,
+    refit_interval: int,
+    train_window: int | None,
+    min_train_size: int,
+    fallback: float = 0.0,
+) -> pd.Series:
+    """
+    Leakage-safe 1-step predictions for each row i using only y[:i] history.
+    Returns a Series aligned to y.index.
+    """
+    import numpy as np
+    from statsmodels.tsa.arima.model import ARIMA
+
+    y_arr = y.to_numpy(dtype=float)
+    preds = np.full(len(y_arr), fallback, dtype=float)
+
+    history: list[float] = []
+    last_fit_i = -(10**9)
+    last_result: Any | None = None
+
+    for i in range(len(y_arr)):
+        yi = float(y_arr[i])
+
+        # predict at i using history up to i-1
+        if i == 0:
+            history.append(yi)
+            continue
+
+        hist_used = history[-train_window:] if (train_window and train_window > 0) else history
+
+        if len(hist_used) < min_train_size:
+            history.append(yi)
+            continue
+
+        need_refit = (i - last_fit_i) >= refit_interval or last_result is None
+        if need_refit:
+            try:
+                last_result = ARIMA(
+                    np.asarray(hist_used, dtype=float), order=order, trend=trend
+                ).fit()
+                last_fit_i = i
+            except Exception:
+                last_result = None
+
+        if last_result is not None:
+            try:
+                fc = last_result.forecast(steps=1)
+                val = float(fc[0])
+                if np.isfinite(val):
+                    preds[i] = val
+            except Exception:
+                last_result = None
+
+        history.append(yi)
+
+    return pd.Series(preds, index=y.index, name="y_pred")
+
+
 def discover_models(models_dir: Path) -> list[dict[str, str]]:
     models: list[dict[str, str]] = []
 
@@ -50,12 +117,14 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
                 }
             )
 
-    # experts: models/experts/<regime>/latest.joblib
+    # experts: models/experts/<regime>/latest.joblib OR latest.json
     experts_root = models_dir / "experts"
     if experts_root.exists():
         for regime_dir in experts_root.iterdir():
             if not regime_dir.is_dir():
                 continue
+
+            # sklearn-style expert
             latest_model = regime_dir / "latest.joblib"
             if latest_model.exists():
                 models.append(
@@ -63,6 +132,21 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
                         "model_name": f"expert_{regime_dir.name}",
                         "model_source": "expert",
                         "model_path": str(latest_model),
+                        "expert_kind": "sklearn",
+                        "regime": regime_dir.name,
+                    }
+                )
+
+            # ARIMA-style expert
+            latest_json = regime_dir / "latest.json"
+            if latest_json.exists():
+                models.append(
+                    {
+                        "model_name": f"expert_arima_{regime_dir.name}",
+                        "model_source": "expert",
+                        "model_path": str(latest_json),
+                        "expert_kind": "arima",
+                        "regime": regime_dir.name,
                     }
                 )
 
@@ -353,6 +437,68 @@ def run(config: BatchPredictConfig) -> Path:
     for spec in models:
         model_path = Path(spec["model_path"])
         try:
+            if spec.get("expert_kind") == "arima":
+                meta = _load_json(model_path)
+
+                order = (
+                    int(meta["order"]["p"]),
+                    int(meta["order"]["d"]),
+                    int(meta["order"]["q"]),
+                )
+                trend = str(meta.get("trend", "n"))
+                refit_interval = int(meta.get("refit_interval", 50))
+                train_window_raw = meta.get("train_window", None)
+                train_window = (
+                    int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+                )
+                min_train_size = int(meta.get("min_train_size", 120))
+
+                target_col = str(meta.get("target_col", "log_return_1_x"))
+                target_shift = int(meta.get("target_shift", -1))
+
+                if target_col not in df.columns:
+                    raise RuntimeError(
+                        f"ARIMA target_col '{target_col}' not in features columns: {sorted(df.columns)}"
+                    )
+
+                # Build the same target series as training did
+                y = df[target_col].astype(float)
+                if target_shift != 0:
+                    y = y.shift(target_shift)
+
+                # Keep inference dense and numeric
+                y = y.fillna(0.0)
+
+                y_pred = _walk_forward_arima_predict(
+                    y,
+                    order=order,
+                    trend=trend,
+                    refit_interval=refit_interval,
+                    train_window=train_window,
+                    min_train_size=min_train_size,
+                    fallback=0.0,
+                )
+
+                for rid, pred in zip(row_ids, y_pred.to_numpy(), strict=False):
+                    rows.append(
+                        {
+                            "row_id": int(rid),
+                            "model_name": spec["model_name"],
+                            "model_source": spec["model_source"],
+                            "y_pred": _safe_pred_value(pred),
+                            "inference_ts": ts,
+                            "features_path": str(config.features_path),
+                            "model_path": str(model_path),
+                            "is_active": False,
+                            "active_model_type": active_model_type,
+                            "active_model_id": active_model_id,
+                            "active_model_version": active_model_version,
+                            "active_regime": active_regime,
+                        }
+                    )
+
+                continue
+
             loaded = joblib.load(model_path)
             model = _unwrap_model(loaded)
 

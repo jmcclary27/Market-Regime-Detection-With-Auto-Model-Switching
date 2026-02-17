@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -137,10 +137,11 @@ def compute_entropy(p: NDArray[np.floating[Any]], eps: float = 1e-12) -> float:
     return _safe_float(ent)
 
 
-def confidence_stats(conf: np.ndarray) -> RegimeConfidenceStats:
-    conf = conf.astype(float)
-    conf = conf[np.isfinite(conf)]
-    if conf.size == 0:
+def confidence_stats(conf: NDArray[np.floating[Any]]) -> RegimeConfidenceStats:
+    conf_arr: NDArray[np.float64] = np.asarray(conf, dtype=np.float64)
+    conf_arr = conf_arr[np.isfinite(conf_arr)]
+
+    if conf_arr.size == 0:
         return RegimeConfidenceStats(
             mean=float("nan"),
             p10=float("nan"),
@@ -150,12 +151,18 @@ def confidence_stats(conf: np.ndarray) -> RegimeConfidenceStats:
             max=float("nan"),
         )
 
-    q10, q50, q90 = np.quantile(conf, [0.10, 0.50, 0.90])
+    q_raw = np.quantile(conf_arr, np.asarray([0.10, 0.50, 0.90], dtype=np.float64))
+    q = cast(NDArray[np.float64], np.asarray(q_raw, dtype=np.float64))
+
+    q10: float = float(q[0])
+    q50: float = float(q[1])
+    q90: float = float(q[2])
+
     return RegimeConfidenceStats(
-        mean=_safe_float(float(np.mean(conf))),
-        p10=_safe_float(float(q10)),
-        p50=_safe_float(float(q50)),
-        p90=_safe_float(float(q90)),
-        min=_safe_float(float(np.min(conf))),
-        max=_safe_float(float(np.max(conf))),
+        mean=_safe_float(float(np.mean(conf_arr))),
+        p10=_safe_float(q10),
+        p50=_safe_float(q50),
+        p90=_safe_float(q90),
+        min=_safe_float(float(np.min(conf_arr))),
+        max=_safe_float(float(np.max(conf_arr))),
     )
