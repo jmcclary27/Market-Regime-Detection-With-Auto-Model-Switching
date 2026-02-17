@@ -496,7 +496,6 @@ def run_pipeline(
 
         step("eval", _eval)
 
-    # ---- promotion (PR14 wiring) ----
     if cfg.mode == "pipeline" and not replay:
 
         def _promotion() -> None:

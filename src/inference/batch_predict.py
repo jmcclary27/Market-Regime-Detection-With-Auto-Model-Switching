@@ -7,7 +7,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import joblib
 import pandas as pd
@@ -34,7 +34,8 @@ def _latest_timestamp_dir(parent: Path) -> Path:
 
 
 def _load_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], data)
 
 
 def _walk_forward_arima_predict(
@@ -78,7 +79,9 @@ def _walk_forward_arima_predict(
         need_refit = (i - last_fit_i) >= refit_interval or last_result is None
         if need_refit:
             try:
-                last_result = ARIMA(np.asarray(hist_used, dtype=float), order=order, trend=trend).fit()
+                last_result = ARIMA(
+                    np.asarray(hist_used, dtype=float), order=order, trend=trend
+                ).fit()
                 last_fit_i = i
             except Exception:
                 last_result = None
@@ -445,7 +448,9 @@ def run(config: BatchPredictConfig) -> Path:
                 trend = str(meta.get("trend", "n"))
                 refit_interval = int(meta.get("refit_interval", 50))
                 train_window_raw = meta.get("train_window", None)
-                train_window = int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+                train_window = (
+                    int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+                )
                 min_train_size = int(meta.get("min_train_size", 120))
 
                 target_col = str(meta.get("target_col", "log_return_1_x"))
