@@ -93,6 +93,7 @@ def _walk_forward_arima_predict(
         if need_refit:
             try:
                 import warnings
+
                 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
                 with warnings.catch_warnings():
@@ -276,7 +277,7 @@ def _safe_pred_value(v: Any) -> float:
         except Exception:
             pass
 
-    if isinstance(v, (pd.Timestamp, np.datetime64)):
+    if isinstance(v, pd.Timestamp | np.datetime64):
         raise ValueError(f"prediction is datetime-like, refusing: {v!r}")
 
     f = float(v)
@@ -302,14 +303,20 @@ def _drop_nan_rows(X: pd.DataFrame, row_ids: pd.Index) -> tuple[pd.DataFrame, pd
     return X_clean, row_ids_clean
 
 
-def _get_active_fields(active_ref_dict: dict[str, Any] | None) -> tuple[str | None, str | None, str | None, str | None]:
+def _get_active_fields(
+    active_ref_dict: dict[str, Any] | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
     if active_ref_dict is None:
         return None, None, None, None
     active_model_type = (
-        str(active_ref_dict.get("model_type")) if active_ref_dict.get("model_type") is not None else None
+        str(active_ref_dict.get("model_type"))
+        if active_ref_dict.get("model_type") is not None
+        else None
     )
     active_model_id = (
-        str(active_ref_dict.get("model_id")) if active_ref_dict.get("model_id") is not None else None
+        str(active_ref_dict.get("model_id"))
+        if active_ref_dict.get("model_id") is not None
+        else None
     )
     active_model_version = (
         str(active_ref_dict.get("version")) if active_ref_dict.get("version") is not None else None
@@ -360,21 +367,27 @@ def run(config: BatchPredictConfig) -> Path:
 
     if config.active_file is not None and config.active_file.exists():
         try:
-            active_model_obj, active_meta, active_ref = load_active_model(active_file=config.active_file)
+            active_model_obj, active_meta, active_ref = load_active_model(
+                active_file=config.active_file
+            )
             active_ref_dict = {
                 "model_type": active_ref.model_type,
                 "regime": active_ref.regime,
                 "model_id": active_ref.model_id,
                 "version": active_ref.version,
                 "artifact_path": active_ref.artifact_path.as_posix(),
-                "metadata_path": active_ref.metadata_path.as_posix() if active_ref.metadata_path else None,
+                "metadata_path": active_ref.metadata_path.as_posix()
+                if active_ref.metadata_path
+                else None,
                 "updated_at": active_ref.updated_at,
             }
             active_artifact_path = active_ref.artifact_path.as_posix()
         except RegistryError as e:
             active_load_error = repr(e)
 
-    active_model_type, active_model_id, active_model_version, active_regime = _get_active_fields(active_ref_dict)
+    active_model_type, active_model_id, active_model_version, active_regime = _get_active_fields(
+        active_ref_dict
+    )
 
     rows: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
@@ -394,7 +407,9 @@ def run(config: BatchPredictConfig) -> Path:
                 trend = str(meta.get("trend", "n"))
                 refit_interval = int(meta.get("refit_interval", 50))
                 train_window_raw = meta.get("train_window", None)
-                train_window = int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+                train_window = (
+                    int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+                )
                 min_train_size = int(meta.get("min_train_size", 120))
 
                 target_col = str(meta.get("target_col", "log_return_1_x"))
@@ -442,7 +457,9 @@ def run(config: BatchPredictConfig) -> Path:
                 X_clean, row_ids_clean = _drop_nan_rows(X_aligned, row_ids)
 
                 if len(X_clean) == 0:
-                    raise RuntimeError("After dropping NaNs, no rows remain for active model inference.")
+                    raise RuntimeError(
+                        "After dropping NaNs, no rows remain for active model inference."
+                    )
 
                 preds = active_model.predict(X_clean)
 
@@ -488,7 +505,9 @@ def run(config: BatchPredictConfig) -> Path:
                 trend = str(meta.get("trend", "n"))
                 refit_interval = int(meta.get("refit_interval", 50))
                 train_window_raw = meta.get("train_window", None)
-                train_window = int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+                train_window = (
+                    int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+                )
                 min_train_size = int(meta.get("min_train_size", 120))
 
                 target_col = str(meta.get("target_col", "log_return_1_x"))
@@ -598,7 +617,9 @@ def run(config: BatchPredictConfig) -> Path:
         "output_path": str(output_path),
         "latest_path": str(latest_path),
         "num_prediction_rows": int(len(out_df)),
-        "num_models_succeeded": int(out_df[["model_source", "model_name"]].drop_duplicates().shape[0]),
+        "num_models_succeeded": int(
+            out_df[["model_source", "model_name"]].drop_duplicates().shape[0]
+        ),
         "failed_models": failed,
         "feature_preprocessing": {
             "converted_datetime_cols": converted_cols,

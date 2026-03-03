@@ -2,6 +2,10 @@
   "by_regime": {
     "bearish": {
       "by_model": {
+        "active": {
+          "mae": 0.01921069025020205,
+          "rmse": 0.025754979543232324
+        },
         "baseline": {
           "mae": 0.9611017820341818,
           "rmse": 1.1204469578433653
@@ -35,11 +39,12 @@
           "rmse": 0.025754979543232324
         }
       },
-      "n": 1160,
+      "n": 1305,
       "rank": [
         "expert_arima_bearish",
         "expert_arima_bullish",
         "expert_arima_sideways",
+        "active",
         "expert_lightgbm_bearish",
         "expert_lightgbm_bullish",
         "expert_lightgbm_sideways",
@@ -49,6 +54,10 @@
     },
     "bullish": {
       "by_model": {
+        "active": {
+          "mae": 0.005392225133478235,
+          "rmse": 0.007286253164121688
+        },
         "baseline": {
           "mae": 1.278033826934885,
           "rmse": 1.400236344044967
@@ -82,8 +91,9 @@
           "rmse": 0.007286253164121688
         }
       },
-      "n": 23992,
+      "n": 26991,
       "rank": [
+        "active",
         "expert_lightgbm_bearish",
         "expert_lightgbm_bullish",
         "expert_lightgbm_sideways",
@@ -96,6 +106,10 @@
     },
     "sideways": {
       "by_model": {
+        "active": {
+          "mae": 0.011517705885086459,
+          "rmse": 0.015947936311897136
+        },
         "baseline": {
           "mae": 0.9085761823751399,
           "rmse": 1.0880910636754553
@@ -129,8 +143,9 @@
           "rmse": 0.015947936311897136
         }
       },
-      "n": 7096,
+      "n": 7983,
       "rank": [
+        "active",
         "expert_lightgbm_bearish",
         "expert_lightgbm_bullish",
         "expert_lightgbm_sideways",
@@ -180,6 +195,10 @@
   },
   "overall": {
     "by_model": {
+      "active": {
+        "mae": 0.00723717151616279,
+        "rmse": 0.010923532113050135
+      },
       "baseline": {
         "mae": 1.1853362141253847,
         "rmse": 1.3282995636715729
@@ -213,8 +232,9 @@
         "rmse": 0.010923532113050135
       }
     },
-    "n": 32272,
+    "n": 36303,
     "rank": [
+      "active",
       "expert_lightgbm_bearish",
       "expert_lightgbm_bullish",
       "expert_lightgbm_sideways",
@@ -225,10 +245,10 @@
       "baseline"
     ]
   },
-  "run_ts": "20260303_230543Z",
+  "run_ts": "20990101_000000Z",
   "target": {
     "requested_target_col": "log_return_1",
     "y_true_col": "log_return_1_x"
   },
-  "timestamp": "20260303_230543Z"
+  "timestamp": "20990101_000000Z"
 }

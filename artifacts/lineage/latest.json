@@ -1,36 +1,28 @@
 {
   "artifacts": {
     "features_manifest": {
-      "path": "data\\features\\20260303_230543Z.manifest.json",
-      "sha256": "265292ae37a163985a05505b2b364eb101ba7d85d171087366d1dbc52c7ef98d"
+      "path": "data\\features\\20990101_000000Z.manifest.json",
+      "sha256": "5ef434b778b4823b8f4c55ebef726376db0ca6e0a6f749e5a63061dbc4e08cf7"
     },
     "features_parquet": {
-      "path": "data\\features\\20260303_230543Z.parquet",
+      "path": "data\\features\\20990101_000000Z.parquet",
       "sha256": "5b8ae4978d745ca60c5b139cfb3cbbcfe72d629b260353470550458886ce43a8"
     },
     "predictions_parquet": {
-      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20260303_230543Z.parquet",
-      "sha256": "fdcf6a8a846c0cd17b3a056a9bd2a3e6c717b2493c59f430f9e16687585b2240"
-    },
-    "promotion_decision_json": {
-      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\walkforward\\promotion_20260303_230543Z.json",
-      "sha256": "fc831cbe1168ef490487c55017951cfa04f7084ea13b7d6f1bca1778564fc631"
+      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20990101_000000Z.parquet",
+      "sha256": "b6dbf497d1e7a68c37aee282298c0914843f350bb84317035ad2c0877ca3571f"
     },
     "raw_csv": {
       "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
       "sha256": "c9feda47919ae7e032ed3a599724e66c9a8441716c27a20f48a2c00757af837a"
     },
     "regimes_parquet": {
-      "path": "data\\regimes\\20260303_230543Z.parquet",
+      "path": "data\\regimes\\20990101_000000Z.parquet",
       "sha256": "ebe3c166163e92d4b9da4ed66b023d23ab32bb7cb5d2a18a985c65b62dea118d"
-    },
-    "walkforward_portfolio_metrics_parquet": {
-      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\walkforward\\portfolio_metrics_20260303_230543Z.parquet",
-      "sha256": "2d1f57e67587407661c7b9e15933425e8b365e438674759ca54ac17c874323dc"
     }
   },
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
-  "git_commit": "57087ec882129ab4b032bda844f518d134b4ba39",
+  "git_commit": "419b31b33db2d10a412d6f7844927839021c68ab",
   "params": {
     "market_symbols": [
       "SPY",
@@ -38,5 +30,5 @@
     ],
     "mode": "pipeline"
   },
-  "run_ts": "20260303_230543Z"
+  "run_ts": "20990101_000000Z"
 }

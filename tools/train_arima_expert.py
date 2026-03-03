@@ -274,6 +274,7 @@ def _walk_forward_arima(
         if need_refit:
             try:
                 import warnings
+
                 from statsmodels.tools.sm_exceptions import ConvergenceWarning
 
                 with warnings.catch_warnings():

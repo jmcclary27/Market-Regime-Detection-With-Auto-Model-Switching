@@ -83,17 +83,14 @@ def _resolve_ref_from_predictions(model_name: str, predictions_path: Path) -> Ac
     missing = sorted([c for c in need if c not in df.columns])
     if missing:
         raise ValueError(
-            "predictions parquet missing required columns: "
-            f"{missing}. columns={list(df.columns)}"
+            f"predictions parquet missing required columns: {missing}. columns={list(df.columns)}"
         )
 
     # Find rows for the chosen model_name
     rows = df.loc[df["model_name"].astype(str) == model_name]
     if rows.empty:
         available = sorted(df["model_name"].astype(str).dropna().unique().tolist())
-        raise ValueError(
-            f"Model '{model_name}' not found in predictions. Available={available}"
-        )
+        raise ValueError(f"Model '{model_name}' not found in predictions. Available={available}")
 
     row0 = rows.iloc[0]
     model_source = str(row0["model_source"])
@@ -114,8 +111,8 @@ def _resolve_ref_from_predictions(model_name: str, predictions_path: Path) -> Ac
             regime = parts[-1]
 
     return ActiveModelRef(
-        model_type=model_source,   # baseline | expert | pretrained
-        model_id=model_name,       # IMPORTANT: keep aligned with wf/model_name everywhere
+        model_type=model_source,  # baseline | expert | pretrained
+        model_id=model_name,  # IMPORTANT: keep aligned with wf/model_name everywhere
         version="0",
         artifact_path=model_path,
         regime=regime,

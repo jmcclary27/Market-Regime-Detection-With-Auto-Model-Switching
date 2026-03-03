@@ -289,6 +289,7 @@ def regime_to_candidate_model_ids(regime: str) -> list[str]:
 
     return base_candidates + regime_candidates.get(regime, [])
 
+
 # ---------- Switcher ----------
 
 
