@@ -1,6 +1,7 @@
 active:
-  model_type: pretrained
-  model_id: elasticnet_v0
+  model_type: expert
+  regime: bearish
+  model_id: expert_lightgbm_bearish
   version: '0'
-  artifact_path: models/pretrained/elasticnet/latest.joblib
-updated_at: '2026-03-03T22:46:14Z'
+  artifact_path: models/experts/bearish/latest.joblib
+updated_at: '2026-03-03T23:06:21Z'
