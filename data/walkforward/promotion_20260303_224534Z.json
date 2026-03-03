@@ -10,6 +10,14 @@
     "expert_lightgbm_sideways"
   ],
   "challenger_model_name": "expert_lightgbm_bearish",
+  "challenger_ref": {
+    "artifact_path": "models/pretrained/elasticnet/latest.joblib",
+    "metadata_path": null,
+    "model_id": "elasticnet_v0",
+    "model_type": "pretrained",
+    "regime": null,
+    "version": "0"
+  },
   "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
   "decision": {
     "challenger": {
@@ -29,20 +37,11 @@
     "promote": true,
     "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail"
   },
-  "git_commit": "57087ec882129ab4b032bda844f518d134b4ba39",
+  "git_commit": "c508174bad69292b875d202af5e10e9efeb7a51f",
   "incumbent_model_name": "baseline",
   "inputs": {
     "lineage": "artifacts\\lineage\\latest.json",
-    "predictions_latest": "data\\predictions\\latest.parquet",
-    "walkforward_metrics": "data\\walkforward\\portfolio_metrics_20260303_230543Z.parquet"
-  },
-  "passed_challenger_ref": {
-    "artifact_path": "models/pretrained/elasticnet/latest.joblib",
-    "metadata_path": null,
-    "model_id": "elasticnet_v0",
-    "model_type": "pretrained",
-    "regime": null,
-    "version": "0"
+    "walkforward_metrics": "data\\walkforward\\portfolio_metrics_20260303_224534Z.parquet"
   },
   "pointer_written": true,
   "promoted": true,
@@ -57,13 +56,5 @@
     "sharpe_col": "sharpe"
   },
   "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail",
-  "resolved_challenger_ref": {
-    "artifact_path": "models/experts/bearish/latest.joblib",
-    "metadata_path": null,
-    "model_id": "expert_lightgbm_bearish",
-    "model_type": "expert",
-    "regime": "bearish",
-    "version": "0"
-  },
-  "run_ts": "20260303_230543Z"
+  "run_ts": "20260303_224534Z"
 }

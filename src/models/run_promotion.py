@@ -69,11 +69,62 @@ def _choose_challenger(wf: pd.DataFrame, incumbent: str, preferred: str | None) 
     return str(means.sort_values(ascending=False).index[0])
 
 
+def _resolve_ref_from_predictions(model_name: str, predictions_path: Path) -> ActiveModelRef:
+    """
+    Resolve an ActiveModelRef for `model_name` using the latest predictions parquet,
+    which already contains: model_name, model_source, model_path.
+    """
+    if not predictions_path.exists():
+        raise FileNotFoundError(f"predictions not found: {predictions_path}")
+
+    df = pd.read_parquet(predictions_path)
+
+    need = {"model_name", "model_source", "model_path"}
+    missing = sorted([c for c in need if c not in df.columns])
+    if missing:
+        raise ValueError(
+            f"predictions parquet missing required columns: {missing}. columns={list(df.columns)}"
+        )
+
+    # Find rows for the chosen model_name
+    rows = df.loc[df["model_name"].astype(str) == model_name]
+    if rows.empty:
+        available = sorted(df["model_name"].astype(str).dropna().unique().tolist())
+        raise ValueError(f"Model '{model_name}' not found in predictions. Available={available}")
+
+    row0 = rows.iloc[0]
+    model_source = str(row0["model_source"])
+    model_path = Path(str(row0["model_path"]))
+
+    # Normalize to registry model_type convention
+    if model_source not in {"baseline", "expert", "pretrained"}:
+        raise ValueError(f"Unknown model_source '{model_source}' for model '{model_name}'")
+
+    # Optional: infer regime from your model_name conventions for expert models
+    regime: str | None = None
+    if model_source == "expert":
+        # expected forms:
+        #   expert_lightgbm_<regime>
+        #   expert_arima_<regime>
+        parts = model_name.split("_")
+        if len(parts) >= 3:
+            regime = parts[-1]
+
+    return ActiveModelRef(
+        model_type=model_source,  # baseline | expert | pretrained
+        model_id=model_name,  # IMPORTANT: keep aligned with wf/model_name everywhere
+        version="0",
+        artifact_path=model_path,
+        regime=regime,
+        metadata_path=None,
+    )
+
+
 def run_promotion(
     *,
     challenger_model_name: str | None,
     incumbent_model_name: str | None,
-    challenger_ref: ActiveModelRef,
+    challenger_ref: ActiveModelRef,  # kept for backwards compatibility, not used for pointer writing
     cfg: PromotionConfig | None = None,
     lineage_path: Path = LINEAGE_LATEST,
     write_pointer: bool = True,
@@ -81,10 +132,9 @@ def run_promotion(
     """
     Read latest lineage -> find walkforward portfolio metrics parquet -> decide promotion.
 
-    Visible behavior additions:
-      - structured logging about what was selected and why promotion did/didn't happen
-      - explicit "promoted" boolean + "reason" at the top-level return dict
-      - records what active pointer would be (and if written)
+    Fix in this version:
+      - Resolve the *selected* challenger to an ActiveModelRef using predictions parquet,
+        and write THAT pointer (instead of whatever was passed in via challenger_ref).
     """
     cfg = cfg or PromotionConfig()
 
@@ -129,6 +179,10 @@ def run_promotion(
         challenger_model_name,
     )
 
+    # Resolve the actually-selected challenger to an artifact path (source of truth: predictions)
+    preds_path = Path("data/predictions/latest.parquet")
+    resolved_ref = _resolve_ref_from_predictions(challenger, preds_path)
+
     # Summaries + decision
     chal = summarize_walkforward(wf, model_name=challenger, cfg=cfg)
     inc = summarize_walkforward(wf, model_name=incumbent, cfg=cfg)
@@ -140,10 +194,8 @@ def run_promotion(
     )
 
     # A short, human-friendly reason string for logs + top-level output
-    # (fallbacks in case decide_promotion doesn't expose exactly what we expect)
     reason = getattr(decision, "reason", None)
     if reason is None:
-        # Try common alternative field names
         reason = getattr(decision, "message", None)
     if reason is None:
         reason = "see decision object"
@@ -161,7 +213,19 @@ def run_promotion(
         "promoted": promoted,
         "reason": str(reason),
         "pointer_written": bool(promoted and write_pointer),
-        "challenger_ref": {
+        # What we actually resolved + would write
+        "resolved_challenger_ref": {
+            "model_type": resolved_ref.model_type,
+            "model_id": resolved_ref.model_id,
+            "version": resolved_ref.version,
+            "artifact_path": resolved_ref.artifact_path.as_posix(),
+            "regime": resolved_ref.regime,
+            "metadata_path": resolved_ref.metadata_path.as_posix()
+            if resolved_ref.metadata_path is not None
+            else None,
+        },
+        # Keep the passed challenger_ref visible for debugging (but do NOT write it)
+        "passed_challenger_ref": {
             "model_type": challenger_ref.model_type,
             "model_id": challenger_ref.model_id,
             "version": challenger_ref.version,
@@ -177,6 +241,7 @@ def run_promotion(
         "inputs": {
             "walkforward_metrics": str(wf_path),
             "lineage": str(lineage_path),
+            "predictions_latest": str(preds_path),
         },
         "available_models": available_models,
     }
@@ -196,9 +261,9 @@ def run_promotion(
             run_ts,
             challenger,
             incumbent,
-            challenger_ref.artifact_path,
+            resolved_ref.artifact_path,
         )
-        write_active(challenger_ref)
+        write_active(resolved_ref)
     else:
         LOG.info(
             "Model not promoted | run_ts=%s promoted=%s reason=%s",

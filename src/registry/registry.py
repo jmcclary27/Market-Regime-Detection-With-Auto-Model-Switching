@@ -1,10 +1,11 @@
 # src/registry/registry.py
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import joblib
 import yaml
@@ -122,25 +123,23 @@ def write_active(ref: ActiveModelRef, active_file: Path = ACTIVE_FILE) -> None:
 def load_active_model(
     active_file: Path = ACTIVE_FILE,
 ) -> tuple[Any, dict[str, Any] | None, ActiveModelRef]:
-    """
-    Load the active model artifact (joblib) and optional metadata (json-like dict).
-    Returns (model, metadata_or_none, ref).
-    """
     ref = read_active(active_file=active_file)
 
     if not ref.artifact_path.exists():
         raise RegistryError(f"Active model artifact not found: {ref.artifact_path}")
 
-    model = joblib.load(ref.artifact_path)
+    # NEW: support json artifacts (ARIMA meta)
+    if ref.artifact_path.suffix.lower() == ".json":
+        data = json.loads(ref.artifact_path.read_text(encoding="utf-8"))
+        model = cast(dict[str, Any], data)
+    else:
+        model = joblib.load(ref.artifact_path)
 
     metadata: dict[str, Any] | None = None
     if ref.metadata_path is not None:
         if not ref.metadata_path.exists():
             raise RegistryError(f"Active model metadata not found: {ref.metadata_path}")
-        # metadata.json should be json, but we can parse via yaml safely too if it's basic json
-        import json
-
-        with ref.metadata_path.open("r", encoding="utf-8") as f:
-            metadata = json.load(f)
+        metadata = json.loads(ref.metadata_path.read_text(encoding="utf-8"))
+        metadata = cast(dict[str, Any], metadata)
 
     return model, metadata, ref
