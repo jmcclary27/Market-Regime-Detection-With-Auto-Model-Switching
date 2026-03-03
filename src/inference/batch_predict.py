@@ -142,7 +142,7 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
             if latest_model.exists():
                 models.append(
                     {
-                        "model_name": f"expert_{regime_dir.name}",
+                        "model_name": f"expert_lightgbm_{regime_dir.name}",
                         "model_source": "expert",
                         "model_path": str(latest_model),
                         "expert_kind": "sklearn",

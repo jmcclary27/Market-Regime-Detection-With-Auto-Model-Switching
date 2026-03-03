@@ -258,20 +258,36 @@ def load_latest_regime(regimes_path: Path) -> str | None:
     return str(last)
 
 
-def regime_to_candidate_model_id(regime: str) -> str | None:
+def regime_to_candidate_model_ids(regime: str) -> list[str]:
     """
-    Map a regime label to the intended expert model id.
+    Return ALL candidate model_ids that are eligible
+    for the given regime.
 
-    This assumes your expert ids follow discover_models() convention:
-      models/experts/<regime>/latest.joblib  -> model_name "expert_<regime>"
+    This allows the switcher to evaluate multiple experts
+    (LightGBM, ARIMA, Ridge, etc.) per regime.
     """
-    mapping = {
-        "bullish": "expert_bullish",
-        "bearish": "expert_bearish",
-        "sideways": "expert_sideways",
+
+    base_candidates = [
+        "baseline",
+        "expert_bullish_ridge_v0",
+    ]
+
+    regime_candidates = {
+        "bullish": [
+            "expert_lightgbm_bullish",
+            "expert_arima_bullish",
+        ],
+        "bearish": [
+            "expert_lightgbm_bearish",
+            "expert_arima_bearish",
+        ],
+        "sideways": [
+            "expert_lightgbm_sideways",
+            "expert_arima_sideways",
+        ],
     }
-    return mapping.get(regime)
 
+    return base_candidates + regime_candidates.get(regime, [])
 
 # ---------- Switcher ----------
 
