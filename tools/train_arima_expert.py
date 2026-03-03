@@ -273,10 +273,15 @@ def _walk_forward_arima(
 
         if need_refit:
             try:
-                model = ARIMA(np.asarray(hist_used, dtype=float), order=order, trend=trend)
-                last_result = model.fit()
-                last_fit_i = i
-                n_refits += 1
+                import warnings
+                from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", ConvergenceWarning)
+                    model = ARIMA(np.asarray(hist_used, dtype=float), order=order, trend=trend)
+                    last_result = model.fit()
+                    last_fit_i = i
+                    n_refits += 1
             except Exception:
                 last_result = None
                 n_fail += 1

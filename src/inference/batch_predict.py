@@ -92,10 +92,15 @@ def _walk_forward_arima_predict(
         need_refit = (i - last_fit_i) >= int(refit_interval) or last_result is None
         if need_refit:
             try:
-                last_result = ARIMA(
-                    np.asarray(hist_used, dtype=np.float64), order=order, trend=trend
-                ).fit()
-                last_fit_i = i
+                import warnings
+                from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", ConvergenceWarning)
+                    last_result = ARIMA(
+                        np.asarray(hist_used, dtype=np.float64), order=order, trend=trend
+                    ).fit()
+                    last_fit_i = i
             except Exception:
                 last_result = None
 
