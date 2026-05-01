@@ -7,5 +7,5 @@ variable "public_key_path" {
 }
 
 variable "my_ip_cidr" {
-  description = "47.219.188.107/32"
+  description = "Your public IP in CIDR format"
 }
