@@ -59,3 +59,15 @@ resource "aws_instance" "app" {
     Name = "market-regime-app"
   }
 }
+
+resource "aws_s3_bucket" "artifacts" {
+  bucket = "market-regime-artifacts-${random_id.bucket_suffix.hex}"
+
+  tags = {
+    Name = "market-regime-artifacts"
+  }
+}
+
+resource "random_id" "bucket_suffix" {
+  byte_length = 4
+}
