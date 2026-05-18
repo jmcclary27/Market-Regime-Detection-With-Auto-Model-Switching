@@ -7,6 +7,16 @@ shift || true
 # Match pipeline timestamp behavior (RUN_TS or generated inside pipeline)
 # You can optionally pass RUN_TS env var when calling docker compose.
 
+if [ -n "${ARTIFACT_BUCKET:-}" ]; then
+  echo "Syncing artifacts from S3 bucket: $ARTIFACT_BUCKET"
+
+  mkdir -p /app/data/raw
+  mkdir -p /app/models
+
+  aws s3 sync "s3://${ARTIFACT_BUCKET}/data/raw" /app/data/raw
+  aws s3 sync "s3://${ARTIFACT_BUCKET}/models" /app/models
+fi
+
 case "$cmd" in
   pipeline)
     exec python -m src.pipeline.run "$@"
