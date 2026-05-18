@@ -17,3 +17,5 @@ services:
       - ./models:/app/models
       - ./mlruns:/app/mlruns
     restart: unless-stopped
+    env_file:
+      - docker.env
