@@ -16,6 +16,7 @@ services:
       - ./data:/app/data
       - ./models:/app/models
       - ./mlruns:/app/mlruns
+      - ~/.aws:/home/appuser/.aws:ro
     restart: unless-stopped
     env_file:
       - docker.env
