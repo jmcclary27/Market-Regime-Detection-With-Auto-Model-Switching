@@ -111,6 +111,10 @@ PYCODE
     exec mypy "$@"
     ;;
 
+  live-sim)
+    exec python -m src.trading.live_sim "$@"
+    ;;
+
   *)
     exec "$cmd" "$@"
     ;;
