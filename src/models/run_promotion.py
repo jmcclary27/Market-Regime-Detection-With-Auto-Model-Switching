@@ -16,6 +16,8 @@ LOG = logging.getLogger("promotion")
 
 LINEAGE_LATEST = Path("artifacts/lineage/latest.json")
 
+NON_PROMOTABLE_MODELS = {"active"}
+
 
 def _read_json(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
@@ -34,8 +36,10 @@ def _choose_incumbent(wf: pd.DataFrame, preferred: str | None) -> str:
         raise ValueError("walk-forward table missing required column: model_name")
 
     names = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
+    names = [n for n in names if n not in NON_PROMOTABLE_MODELS]
+
     if not names:
-        raise ValueError("walk-forward table has no model_name values")
+        raise ValueError("walk-forward table has no promotable model_name values")
 
     if preferred and preferred in names:
         return preferred
@@ -46,6 +50,8 @@ def _choose_incumbent(wf: pd.DataFrame, preferred: str | None) -> str:
 
 def _choose_challenger(wf: pd.DataFrame, incumbent: str, preferred: str | None) -> str:
     names = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
+    names = [n for n in names if n not in NON_PROMOTABLE_MODELS]
+
     others = [n for n in names if n != incumbent]
     if not others:
         raise ValueError(f"no challenger candidates, only incumbent present: {incumbent}")
@@ -53,7 +59,6 @@ def _choose_challenger(wf: pd.DataFrame, incumbent: str, preferred: str | None) 
     if preferred and preferred in others:
         return preferred
 
-    # Default heuristic: pick best by mean sharpe across splits, if available.
     tmp = wf.copy()
     tmp["model_name"] = tmp["model_name"].astype(str)
     tmp = tmp[tmp["model_name"].isin(others)]
@@ -63,6 +68,7 @@ def _choose_challenger(wf: pd.DataFrame, incumbent: str, preferred: str | None) 
 
     means = tmp.groupby("model_name", sort=True)["sharpe"].mean()
     means = means.replace([float("inf"), float("-inf")], pd.NA).dropna()
+
     if means.empty:
         return others[0]
 
@@ -158,6 +164,7 @@ def run_promotion(
         )
 
     available_models = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
+    promotable_models = [m for m in available_models if m not in NON_PROMOTABLE_MODELS]
     LOG.info(
         "Promotion start | run_ts=%s wf_path=%s n_rows=%d n_models=%d",
         run_ts,
@@ -244,6 +251,8 @@ def run_promotion(
             "predictions_latest": str(preds_path),
         },
         "available_models": available_models,
+        "promotable_models": promotable_models,
+        "non_promotable_models": sorted(NON_PROMOTABLE_MODELS),
     }
 
     out_path = _promotion_out_path_for_run(run_ts)
