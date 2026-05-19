@@ -1,7 +1,7 @@
 active:
   model_type: expert
-  regime: bearish
-  model_id: expert_lightgbm_bearish
+  regime: sideways
+  model_id: expert_lightgbm_sideways
   version: '0'
-  artifact_path: models/experts/bearish/latest.joblib
-updated_at: '2026-03-03T23:06:21Z'
+  artifact_path: models/experts/sideways/latest.joblib
+updated_at: '2026-05-19T13:06:57Z'

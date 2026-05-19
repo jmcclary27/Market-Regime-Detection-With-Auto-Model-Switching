@@ -245,10 +245,10 @@
       "baseline"
     ]
   },
-  "run_ts": "20260519_130011Z",
+  "run_ts": "20260519_130612Z",
   "target": {
     "requested_target_col": "log_return_1",
     "y_true_col": "log_return_1_x"
   },
-  "timestamp": "20260519_130011Z"
+  "timestamp": "20260519_130612Z"
 }
