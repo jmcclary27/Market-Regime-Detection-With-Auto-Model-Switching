@@ -15,3 +15,29 @@ regimes:
 
 logging:
   level: INFO
+
+live_sim:
+  provider: yfinance
+  interval: 5m
+  poll_sleep_seconds: 60
+  lookback_days: 60
+  candle_close_buffer_seconds: 60
+  stale_bar_tolerance_seconds: 600
+  market_timezone: America/New_York
+  market_open: "09:30"
+  market_close: "16:00"
+  regular_hours_only: true
+  starting_cash: 100000.0
+  dry_run: true
+  lock_timeout_seconds: 900
+  provider_failure_backoff_seconds: 300
+  paths:
+    raw_dir: data/raw/live_sim
+    runs_dir: data/runs
+    predictions_dir: data/predictions
+    state_path: data/live_sim/account_state.json
+    loop_state_path: data/live_sim/live_loop_state.json
+    lock_path: data/live_sim/live_sim.lock
+    heartbeat_path: data/live_sim/heartbeat.json
+    trades_path: data/live_sim/trades.parquet
+    equity_path: data/live_sim/equity_curve.parquet

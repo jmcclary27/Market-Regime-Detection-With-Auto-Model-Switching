@@ -5,7 +5,14 @@ from datetime import datetime
 import yfinance as yf
 
 
-def fetch_market_data(symbol: str, start_date: str, end_date: str):
+def fetch_market_data(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    *,
+    interval: str = "1d",
+    auto_adjust: bool = False,
+):
     """
     Fetch raw market data for a given symbol and date range using yfinance.
 
@@ -13,6 +20,8 @@ def fetch_market_data(symbol: str, start_date: str, end_date: str):
         symbol: Market ticker, e.g. "SPY"
         start_date: YYYY-MM-DD (inclusive)
         end_date: YYYY-MM-DD (exclusive-ish, yfinance behavior depends on interval)
+        interval: yfinance interval, e.g. "1d" or "5m"
+        auto_adjust: passed through to yfinance
 
     Returns:
         pandas.DataFrame with OHLCV columns and DatetimeIndex
@@ -27,8 +36,8 @@ def fetch_market_data(symbol: str, start_date: str, end_date: str):
         tickers=symbol,
         start=start_date,
         end=end_date,
-        interval="1d",
-        auto_adjust=False,
+        interval=interval,
+        auto_adjust=auto_adjust,
         progress=False,
     )
 
