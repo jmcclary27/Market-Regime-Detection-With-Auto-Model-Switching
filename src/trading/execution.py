@@ -36,6 +36,10 @@ def execute_signal(
     action = "NONE"
     shares_delta = 0.0
     reason = "hold signal"
+    fill_price = price
+    trade_value = 0.0
+    fee = 0.0
+    realized_pnl_delta = 0.0
 
     slippage = price * (config.slippage_bps / 10_000)
     cost_rate = config.transaction_cost_bps / 10_000
@@ -62,6 +66,7 @@ def execute_signal(
 
             state.cash -= trade_value + fee
             state.position += shares_delta
+            state.cost_basis += trade_value + fee
             action = "BUY"
             reason = "bought simulated shares"
 
@@ -74,12 +79,21 @@ def execute_signal(
             if abs(shares_delta) <= 0:
                 reason = "position too small to sell"
             else:
+                old_position = state.position
+                old_cost_basis = state.cost_basis
                 fill_price = price - slippage
                 trade_value = abs(shares_delta) * fill_price
                 fee = trade_value * cost_rate
+                cost_basis_delta = old_cost_basis * (abs(shares_delta) / old_position)
+                realized_pnl_delta = trade_value - cost_basis_delta - fee
 
                 state.cash += trade_value - fee
                 state.position += shares_delta
+                state.cost_basis -= cost_basis_delta
+                state.realized_pnl += realized_pnl_delta
+                if state.position <= 1e-12:
+                    state.position = 0.0
+                    state.cost_basis = 0.0
                 action = "SELL"
                 reason = "sold simulated shares"
 
@@ -96,10 +110,19 @@ def execute_signal(
         "signal": signal,
         "action": action,
         "price": price,
+        "fill_price": fill_price,
         "shares_delta": shares_delta,
+        "trade_value": trade_value,
+        "fee": fee,
+        "realized_pnl_delta": realized_pnl_delta,
         "cash": state.cash,
         "position": state.position,
         "portfolio_value": state.portfolio_value,
+        "realized_pnl": state.realized_pnl,
+        "unrealized_pnl": state.unrealized_pnl,
+        "total_pnl": state.total_pnl,
+        "cost_basis": state.cost_basis,
+        "avg_entry_price": state.avg_entry_price,
         "reason": reason,
     }
 

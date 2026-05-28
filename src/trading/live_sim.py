@@ -209,6 +209,25 @@ def is_market_open(now: datetime, cfg: LiveSimConfig) -> bool:
     return market_open <= local < market_close
 
 
+def market_close_for_signal(signal_ts: pd.Timestamp | datetime, cfg: LiveSimConfig) -> pd.Timestamp:
+    local_signal = to_utc_timestamp(signal_ts).tz_convert(cfg.market_timezone)
+    close_h, close_m = _parse_hhmm(cfg.market_close)
+    market_close = local_signal.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
+    return market_close.tz_convert("UTC")
+
+
+def _should_queue_pending_signal(
+    signal: str,
+    *,
+    signal_ts: pd.Timestamp | datetime,
+    expected_fill_ts: pd.Timestamp | datetime,
+    cfg: LiveSimConfig,
+) -> bool:
+    if signal.upper() == "HOLD":
+        return False
+    return bool(to_utc_timestamp(expected_fill_ts) < market_close_for_signal(signal_ts, cfg))
+
+
 def interval_to_timedelta(interval: str) -> pd.Timedelta:
     unit = interval[-1].lower()
     value = int(interval[:-1])
@@ -427,6 +446,9 @@ def _pending_expired(
     current_bar: MarketBar,
     cfg: LiveSimConfig,
 ) -> bool:
+    if str(pending.get("signal", "")).upper() == "HOLD":
+        return True
+
     expected = pending.get("expected_fill_bar_timestamp_utc")
     if not expected:
         return True
@@ -435,10 +457,8 @@ def _pending_expired(
         return True
 
     signal_ts = to_utc_timestamp(str(pending.get("signal_bar_timestamp_utc")))
-    local_signal = signal_ts.tz_convert(cfg.market_timezone)
-    close_h, close_m = _parse_hhmm(cfg.market_close)
-    market_close = local_signal.replace(hour=close_h, minute=close_m, second=0, microsecond=0)
-    return bool(signal_ts + interval_to_timedelta(cfg.interval) >= market_close.tz_convert("UTC"))
+    market_close = market_close_for_signal(signal_ts, cfg)
+    return bool(expected_ts >= market_close)
 
 
 def execute_pending_signal(
@@ -538,11 +558,21 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
     run_ts = utc_timestamp()
 
     if not is_market_open(now, cfg):
+        extra: dict[str, Any] = {}
+        loop_state = load_loop_state(cfg.paths.loop_state_path)
+        pending = loop_state.get("pending_signal")
+        if isinstance(pending, dict):
+            loop_state["canceled_pending_signal"] = pending
+            loop_state["pending_signal"] = None
+            save_loop_state(cfg.paths.loop_state_path, loop_state)
+            extra["canceled_pending_signal"] = pending
+
         write_heartbeat(
             cfg.paths.heartbeat_path,
             status="idle",
             message="market is closed",
             run_ts=run_ts,
+            extra=extra,
         )
         return {"status": "idle", "reason": "market_closed"}
 
@@ -609,18 +639,34 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
         config=SignalConfig(),
     )
     expected_fill_ts = bar.timestamp_utc + interval_to_timedelta(cfg.interval)
-    pending_signal = {
-        "signal_bar_timestamp_utc": bar_ts,
-        "expected_fill_bar_timestamp_utc": utc_iso(expected_fill_ts),
-        "signal": signal,
-        "prediction": active.prediction,
-        "regime": regime,
-        "active_model_id": active.active_model_id,
-        "model_name": active.model_name,
-        "row_id": active.row_id,
-        "created_at_utc": timestamp,
-    }
-    loop_state["pending_signal"] = pending_signal
+    pending_signal: dict[str, Any] | None = None
+    decision_reason = "created pending signal for next candle open"
+
+    if signal == "HOLD":
+        loop_state["pending_signal"] = None
+        decision_reason = "hold signal recorded without pending fill"
+    elif not _should_queue_pending_signal(
+        signal,
+        signal_ts=bar.timestamp_utc,
+        expected_fill_ts=expected_fill_ts,
+        cfg=cfg,
+    ):
+        loop_state["pending_signal"] = None
+        decision_reason = "signal not queued because expected fill is at or after market close"
+    else:
+        pending_signal = {
+            "signal_bar_timestamp_utc": bar_ts,
+            "expected_fill_bar_timestamp_utc": utc_iso(expected_fill_ts),
+            "signal": signal,
+            "prediction": active.prediction,
+            "regime": regime,
+            "active_model_id": active.active_model_id,
+            "model_name": active.model_name,
+            "row_id": active.row_id,
+            "created_at_utc": timestamp,
+        }
+        loop_state["pending_signal"] = pending_signal
+
     loop_state["last_processed_bar_timestamp_utc"] = bar_ts
 
     mark_decision_snapshot(
@@ -631,7 +677,7 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
         active_model_id=active.active_model_id,
         prediction=active.prediction,
         signal=signal,
-        reason="created pending signal for next candle open",
+        reason=decision_reason,
     )
     save_loop_state(cfg.paths.loop_state_path, loop_state)
 

@@ -12,6 +12,9 @@ from src.trading.live_sim import (
     LiveSimConfig,
     LiveSimLock,
     LiveSimPaths,
+    MarketBar,
+    _pending_expired,
+    _should_queue_pending_signal,
     active_prediction_for_bar,
     atomic_write_json,
     is_market_open,
@@ -21,6 +24,7 @@ from src.trading.live_sim import (
     run_once,
     save_loop_state,
 )
+from src.trading.state import AccountState, load_account_state, save_account_state
 
 
 def _cfg(tmp_path: Path) -> LiveSimConfig:
@@ -248,6 +252,114 @@ def test_pending_signal_fills_then_creates_next_pending(
     state = load_loop_state(cfg.paths.loop_state_path)
     assert state["pending_signal"]["signal_bar_timestamp_utc"] == "2026-05-18T14:05:00+00:00"
     assert state["pending_signal"]["expected_fill_bar_timestamp_utc"] == "2026-05-18T14:10:00+00:00"
+
+
+def test_hold_signal_does_not_create_pending_signal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _cfg(tmp_path)
+    raw_path = tmp_path / "raw.parquet"
+    regimes_path = tmp_path / "regimes.parquet"
+    preds_path = tmp_path / "preds.parquet"
+
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-05-18T14:00:00Z", "2026-05-18T14:05:00Z"],
+            "symbol": ["SPY", "SPY"],
+            "open": [100.0, 101.0],
+            "close": [100.5, 101.5],
+        }
+    ).to_parquet(raw_path, index=False)
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-05-18T14:00:00Z", "2026-05-18T14:05:00Z"],
+            "regime": ["bullish", "bullish"],
+        }
+    ).to_parquet(regimes_path, index=False)
+    pd.DataFrame(
+        {
+            "row_id": [1],
+            "model_name": ["active"],
+            "y_pred": [0.0],
+            "is_active": [True],
+            "active_model_id": ["active_model"],
+        }
+    ).to_parquet(preds_path, index=False)
+
+    save_loop_state(
+        cfg.paths.loop_state_path,
+        {"last_processed_bar_timestamp_utc": "2026-05-18T14:00:00+00:00"},
+    )
+    monkeypatch.setattr(
+        "src.trading.live_sim.build_cycle_artifacts",
+        lambda cfg, run_ts, now: CycleArtifacts(raw_path, tmp_path / "f", regimes_path, preds_path),
+    )
+
+    result = run_once(cfg, now=datetime(2026, 5, 18, 14, 11, 0, tzinfo=UTC))
+
+    assert result["status"] == "ok"
+    assert result["pending_signal"] is None
+    state = load_loop_state(cfg.paths.loop_state_path)
+    assert state["pending_signal"] is None
+
+
+def test_close_time_signal_is_not_queued(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    signal_ts = pd.Timestamp("2026-05-18T19:55:00Z")
+    expected_fill_ts = pd.Timestamp("2026-05-18T20:00:00Z")
+
+    assert not _should_queue_pending_signal(
+        "BUY",
+        signal_ts=signal_ts,
+        expected_fill_ts=expected_fill_ts,
+        cfg=cfg,
+    )
+
+
+def test_market_closed_clears_pending_signal_without_changing_account(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    save_loop_state(
+        cfg.paths.loop_state_path,
+        {
+            "last_processed_bar_timestamp_utc": "2026-05-18T19:50:00+00:00",
+            "pending_signal": {
+                "signal_bar_timestamp_utc": "2026-05-18T19:50:00+00:00",
+                "expected_fill_bar_timestamp_utc": "2026-05-18T19:55:00+00:00",
+                "signal": "BUY",
+            },
+        },
+    )
+    save_account_state(
+        AccountState(cash=500.0, position=2.0, cost_basis=200.0, last_price=100.0),
+        cfg.paths.state_path,
+    )
+
+    result = run_once(cfg, now=datetime(2026, 5, 18, 21, 0, 0, tzinfo=UTC))
+
+    assert result == {"status": "idle", "reason": "market_closed"}
+    loop_state = load_loop_state(cfg.paths.loop_state_path)
+    assert loop_state["pending_signal"] is None
+    assert loop_state["canceled_pending_signal"]["signal"] == "BUY"
+    account = load_account_state(cfg.paths.state_path, starting_cash=cfg.starting_cash)
+    assert account.cash == pytest.approx(500.0)
+    assert account.position == pytest.approx(2.0)
+    assert account.cost_basis == pytest.approx(200.0)
+
+
+def test_pending_hold_expires_without_trade(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    pending = {
+        "signal_bar_timestamp_utc": "2026-05-18T14:00:00+00:00",
+        "expected_fill_bar_timestamp_utc": "2026-05-18T14:05:00+00:00",
+        "signal": "HOLD",
+    }
+    bar = MarketBar(
+        timestamp_utc=pd.Timestamp("2026-05-18T14:05:00Z"),
+        open_price=101.0,
+        close_price=101.5,
+    )
+
+    assert _pending_expired(pending, bar, cfg)
 
 
 def test_atomic_write_json_replaces_file(tmp_path: Path) -> None:
