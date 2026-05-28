@@ -1,8 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 
 import yfinance as yf
+
+_YFINANCE_CACHE_READY = False
+
+
+def _ensure_yfinance_cache_location() -> None:
+    global _YFINANCE_CACHE_READY
+    if _YFINANCE_CACHE_READY:
+        return
+
+    cache_dir = Path("data/yfinance_cache")
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    yf.set_tz_cache_location(str(cache_dir))
+    _YFINANCE_CACHE_READY = True
 
 
 def fetch_market_data(
@@ -31,6 +45,8 @@ def fetch_market_data(
         datetime.strptime(end_date, "%Y-%m-%d")
     except ValueError as e:
         raise ValueError("Dates must be in YYYY-MM-DD format") from e
+
+    _ensure_yfinance_cache_location()
 
     df = yf.download(
         tickers=symbol,

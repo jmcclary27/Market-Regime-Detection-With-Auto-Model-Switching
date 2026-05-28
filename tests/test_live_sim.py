@@ -17,6 +17,7 @@ from src.trading.live_sim import (
     is_market_open,
     latest_closed_bar,
     load_loop_state,
+    poll_intraday_bars,
     run_once,
     save_loop_state,
 )
@@ -117,6 +118,46 @@ def test_active_prediction_missing_active_row_fails(tmp_path: Path) -> None:
             regimes_path,
             bar_timestamp_utc="2026-05-18T14:05:00+00:00",
         )
+
+
+def test_poll_intraday_bars_clamps_minute_lookback_for_yahoo_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _cfg(tmp_path)
+    calls: list[tuple[str, str, str, str]] = []
+
+    def fake_fetch_market_data(
+        symbol: str,
+        start_date: str,
+        end_date: str,
+        *,
+        interval: str,
+        auto_adjust: bool,
+    ) -> pd.DataFrame:
+        calls.append((symbol, start_date, end_date, interval))
+        return pd.DataFrame(
+            {
+                "timestamp": ["2026-05-28T14:00:00Z"],
+                "open": [100.0],
+                "high": [101.0],
+                "low": [99.0],
+                "close": [100.5],
+                "volume": [1000],
+            }
+        )
+
+    monkeypatch.setattr("src.trading.live_sim.fetch_market_data", fake_fetch_market_data)
+
+    poll_intraday_bars(
+        cfg,
+        run_ts="20260528_190000Z",
+        now=datetime(2026, 5, 28, 19, 0, tzinfo=UTC),
+    )
+
+    assert calls == [
+        ("SPY", "2026-03-30", "2026-05-29", "5m"),
+        ("QQQ", "2026-03-30", "2026-05-29", "5m"),
+    ]
 
 
 def test_first_start_initializes_without_trade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -40,6 +40,7 @@ Thumbs.db
 
 # Raw ingestion outputs
 data/raw/
+data/yfinance_cache/
 
 # Feature pipeline outputs
 data/features/

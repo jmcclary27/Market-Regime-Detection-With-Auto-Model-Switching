@@ -221,6 +221,19 @@ def interval_to_timedelta(interval: str) -> pd.Timedelta:
     raise ValueError(f"Unsupported live_sim interval: {interval}")
 
 
+def _effective_yfinance_lookback_days(interval: str, requested_days: int) -> int:
+    if requested_days < 1:
+        raise ValueError("live_sim lookback_days must be >= 1")
+
+    unit = interval[-1].lower()
+    if unit == "m":
+        # Yahoo minute bars are limited to a 60-day request span. Since this
+        # poll uses tomorrow as the exclusive end date to include today's bars,
+        # a configured 60-day lookback would otherwise become a 61-day request.
+        return min(requested_days, 59)
+    return requested_days
+
+
 def _normalize_raw_frame(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     out = df.copy()
     if "timestamp" not in out.columns:
@@ -246,7 +259,8 @@ def _normalize_raw_frame(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
 
 
 def poll_intraday_bars(cfg: LiveSimConfig, *, run_ts: str, now: datetime) -> Path:
-    start_date = (now.date() - timedelta(days=cfg.lookback_days)).isoformat()
+    lookback_days = _effective_yfinance_lookback_days(cfg.interval, cfg.lookback_days)
+    start_date = (now.date() - timedelta(days=lookback_days)).isoformat()
     end_date = (now.date() + timedelta(days=1)).isoformat()
 
     frames: list[pd.DataFrame] = []
