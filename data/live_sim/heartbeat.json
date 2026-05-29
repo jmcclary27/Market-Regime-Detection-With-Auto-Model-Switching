@@ -1,6 +1,7 @@
 {
-  "message": "market is closed",
-  "run_ts": "20260528_200050Z",
+  "bar_timestamp_utc": "2026-05-29T14:40:00+00:00",
+  "message": "latest closed candle already processed",
+  "run_ts": "20260529_144731Z",
   "status": "idle",
-  "updated_at_utc": "2026-05-28T20:00:50.020907+00:00"
+  "updated_at_utc": "2026-05-29T14:47:46.542627+00:00"
 }

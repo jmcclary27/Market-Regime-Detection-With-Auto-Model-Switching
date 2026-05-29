@@ -19,7 +19,7 @@ logging:
 live_sim:
   provider: yfinance
   interval: 5m
-  poll_sleep_seconds: 60
+  poll_sleep_seconds: 300
   lookback_days: 60
   candle_close_buffer_seconds: 60
   stale_bar_tolerance_seconds: 600
