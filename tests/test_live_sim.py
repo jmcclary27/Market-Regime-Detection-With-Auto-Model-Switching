@@ -214,11 +214,11 @@ def test_pending_signal_fills_then_creates_next_pending(
     )
     preds = pd.DataFrame(
         {
-            "row_id": [1],
-            "model_name": ["active"],
-            "y_pred": [0.003],
-            "is_active": [True],
-            "active_model_id": ["active_model"],
+            "row_id": [1, 1],
+            "model_name": ["active", "expert_lightgbm_bullish"],
+            "y_pred": [-0.1, 0.003],
+            "is_active": [True, False],
+            "active_model_id": ["expert_lightgbm_sideways", "expert_lightgbm_sideways"],
         }
     )
     raw.to_parquet(raw_path, index=False)
@@ -249,9 +249,82 @@ def test_pending_signal_fills_then_creates_next_pending(
     assert result["status"] == "ok"
     assert result["trade"]["action"] == "BUY"
     assert result["trade"]["price"] == 101.0
+    assert result["selected_model_id"] == "expert_lightgbm_bullish"
     state = load_loop_state(cfg.paths.loop_state_path)
     assert state["pending_signal"]["signal_bar_timestamp_utc"] == "2026-05-18T14:05:00+00:00"
     assert state["pending_signal"]["expected_fill_bar_timestamp_utc"] == "2026-05-18T14:10:00+00:00"
+    assert state["pending_signal"]["active_model_id"] == "expert_lightgbm_bullish"
+
+
+@pytest.mark.parametrize(
+    ("regime", "expected_model"),
+    [
+        ("bullish", "expert_lightgbm_bullish"),
+        ("bearish", "expert_lightgbm_bearish"),
+        ("sideways", "expert_lightgbm_sideways"),
+    ],
+)
+def test_live_sim_selects_lightgbm_expert_for_current_regime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    regime: str,
+    expected_model: str,
+) -> None:
+    cfg = _cfg(tmp_path)
+    raw_path = tmp_path / "raw.parquet"
+    regimes_path = tmp_path / "regimes.parquet"
+    preds_path = tmp_path / "preds.parquet"
+
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-05-18T14:00:00Z", "2026-05-18T14:05:00Z"],
+            "symbol": ["SPY", "SPY"],
+            "open": [100.0, 101.0],
+            "close": [100.5, 101.5],
+        }
+    ).to_parquet(raw_path, index=False)
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-05-18T14:00:00Z", "2026-05-18T14:05:00Z"],
+            "regime": ["sideways", regime],
+        }
+    ).to_parquet(regimes_path, index=False)
+    pd.DataFrame(
+        {
+            "row_id": [1, 1, 1, 1],
+            "model_name": [
+                "active",
+                "expert_lightgbm_bullish",
+                "expert_lightgbm_bearish",
+                "expert_lightgbm_sideways",
+            ],
+            "y_pred": [-0.1, 0.002, -0.002, 0.002],
+            "is_active": [True, False, False, False],
+            "active_model_id": [
+                "expert_lightgbm_sideways",
+                "expert_lightgbm_sideways",
+                "expert_lightgbm_sideways",
+                "expert_lightgbm_sideways",
+            ],
+        }
+    ).to_parquet(preds_path, index=False)
+
+    save_loop_state(
+        cfg.paths.loop_state_path,
+        {"last_processed_bar_timestamp_utc": "2026-05-18T14:00:00+00:00"},
+    )
+    monkeypatch.setattr(
+        "src.trading.live_sim.build_cycle_artifacts",
+        lambda cfg, run_ts, now: CycleArtifacts(raw_path, tmp_path / "f", regimes_path, preds_path),
+    )
+
+    result = run_once(cfg, now=datetime(2026, 5, 18, 14, 11, 0, tzinfo=UTC))
+
+    assert result["status"] == "ok"
+    assert result["selected_model_id"] == expected_model
+    state = load_loop_state(cfg.paths.loop_state_path)
+    if result["pending_signal"] is not None:
+        assert state["pending_signal"]["active_model_id"] == expected_model
 
 
 def test_hold_signal_does_not_create_pending_signal(
@@ -279,10 +352,10 @@ def test_hold_signal_does_not_create_pending_signal(
     pd.DataFrame(
         {
             "row_id": [1],
-            "model_name": ["active"],
+            "model_name": ["expert_lightgbm_bullish"],
             "y_pred": [0.0],
-            "is_active": [True],
-            "active_model_id": ["active_model"],
+            "is_active": [False],
+            "active_model_id": ["expert_lightgbm_sideways"],
         }
     ).to_parquet(preds_path, index=False)
 
@@ -301,6 +374,61 @@ def test_hold_signal_does_not_create_pending_signal(
     assert result["pending_signal"] is None
     state = load_loop_state(cfg.paths.loop_state_path)
     assert state["pending_signal"] is None
+
+
+def test_missing_regime_matched_expert_records_hold_without_pending(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _cfg(tmp_path)
+    raw_path = tmp_path / "raw.parquet"
+    regimes_path = tmp_path / "regimes.parquet"
+    preds_path = tmp_path / "preds.parquet"
+
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-05-18T14:00:00Z", "2026-05-18T14:05:00Z"],
+            "symbol": ["SPY", "SPY"],
+            "open": [100.0, 101.0],
+            "close": [100.5, 101.5],
+        }
+    ).to_parquet(raw_path, index=False)
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-05-18T14:00:00Z", "2026-05-18T14:05:00Z"],
+            "regime": ["sideways", "bullish"],
+        }
+    ).to_parquet(regimes_path, index=False)
+    pd.DataFrame(
+        {
+            "row_id": [1, 1],
+            "model_name": ["active", "expert_lightgbm_sideways"],
+            "y_pred": [0.003, 0.003],
+            "is_active": [True, False],
+            "active_model_id": ["expert_lightgbm_sideways", "expert_lightgbm_sideways"],
+        }
+    ).to_parquet(preds_path, index=False)
+
+    save_loop_state(
+        cfg.paths.loop_state_path,
+        {"last_processed_bar_timestamp_utc": "2026-05-18T14:00:00+00:00"},
+    )
+    monkeypatch.setattr(
+        "src.trading.live_sim.build_cycle_artifacts",
+        lambda cfg, run_ts, now: CycleArtifacts(raw_path, tmp_path / "f", regimes_path, preds_path),
+    )
+
+    result = run_once(cfg, now=datetime(2026, 5, 18, 14, 11, 0, tzinfo=UTC))
+
+    assert result["status"] == "ok"
+    assert result["signal"] == "HOLD"
+    assert result["pending_signal"] is None
+    assert result["selected_model_id"] == "unavailable"
+    assert "missing regime-matched expert prediction" in result["decision_reason"]
+    loop_state = load_loop_state(cfg.paths.loop_state_path)
+    assert loop_state["pending_signal"] is None
+    heartbeat = json.loads(cfg.paths.heartbeat_path.read_text(encoding="utf-8"))
+    assert heartbeat["signal"] == "HOLD"
+    assert "missing regime-matched expert prediction" in heartbeat["decision_reason"]
 
 
 def test_close_time_signal_is_not_queued(tmp_path: Path) -> None:

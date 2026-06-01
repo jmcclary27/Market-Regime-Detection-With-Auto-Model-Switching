@@ -1,7 +1,21 @@
 {
-  "bar_timestamp_utc": "2026-05-29T14:40:00+00:00",
-  "message": "latest closed candle already processed",
-  "run_ts": "20260529_144731Z",
-  "status": "idle",
-  "updated_at_utc": "2026-05-29T14:47:46.542627+00:00"
+  "artifacts": {
+    "features_path": "data\\features\\20260601_174910Z.parquet",
+    "predictions_path": "data\\predictions\\predictions_1780336151.parquet",
+    "raw_path": "data\\raw\\live_sim\\SPY-QQQ_5m_20260601_174910Z.parquet",
+    "regimes_path": "data\\regimes\\20260601_174910Z.parquet"
+  },
+  "bar_timestamp_utc": "2026-06-01T17:40:00+00:00",
+  "decision_reason": "hold signal recorded without pending fill",
+  "message": "processed live simulation candle",
+  "pending_signal": null,
+  "prediction": 6.963846733498323e-05,
+  "regime": "bullish",
+  "run_ts": "20260601_174910Z",
+  "selected_model_id": "expert_lightgbm_bullish",
+  "selected_model_name": "expert_lightgbm_bullish",
+  "signal": "HOLD",
+  "status": "ok",
+  "trade": null,
+  "updated_at_utc": "2026-06-01T17:49:25.108936+00:00"
 }

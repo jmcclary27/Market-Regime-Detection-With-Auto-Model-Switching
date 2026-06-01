@@ -384,6 +384,38 @@ def _first_existing_column(df: pd.DataFrame, candidates: list[str]) -> str | Non
     return None
 
 
+def normalize_regime_label(regime: str) -> str | None:
+    normalized = regime.lower().strip()
+    if normalized in {"bullish", "bearish", "sideways"}:
+        return normalized
+    return None
+
+
+def _regime_for_bar(regimes: pd.DataFrame, *, bar_timestamp_utc: str) -> tuple[int, str]:
+    if "timestamp" not in regimes.columns:
+        raise ValueError("Regimes artifact missing required column: timestamp")
+
+    regimes = regimes.copy()
+    regimes["timestamp"] = pd.to_datetime(regimes["timestamp"], utc=True, errors="coerce")
+    target_ts = to_utc_timestamp(bar_timestamp_utc)
+    matches = regimes[regimes["timestamp"] == target_ts]
+    if matches.empty:
+        raise ValueError(f"No regime/features row found for bar timestamp {bar_timestamp_utc}")
+
+    regime_col = _first_existing_column(
+        regimes,
+        ["regime", "regime_label", "detected_regime", "active_regime"],
+    )
+    if regime_col is None:
+        raise ValueError(f"Regimes artifact has no regime column: {list(regimes.columns)}")
+
+    regime_value = matches.iloc[-1][regime_col]
+    if pd.isna(regime_value):
+        raise ValueError(f"Regime is missing for bar timestamp {bar_timestamp_utc}")
+
+    return int(matches.index[-1]), str(regime_value)
+
+
 def active_prediction_for_bar(
     predictions_path: Path,
     regimes_path: Path,
@@ -398,17 +430,7 @@ def active_prediction_for_bar(
     if missing_pred:
         raise ValueError(f"Predictions missing required columns: {sorted(missing_pred)}")
 
-    if "timestamp" not in regimes.columns:
-        raise ValueError("Regimes artifact missing required column: timestamp")
-
-    regimes = regimes.copy()
-    regimes["timestamp"] = pd.to_datetime(regimes["timestamp"], utc=True, errors="coerce")
-    target_ts = to_utc_timestamp(bar_timestamp_utc)
-    matches = regimes[regimes["timestamp"] == target_ts]
-    if matches.empty:
-        raise ValueError(f"No regime/features row found for bar timestamp {bar_timestamp_utc}")
-
-    row_id = int(matches.index[-1])
+    row_id, regime = _regime_for_bar(regimes, bar_timestamp_utc=bar_timestamp_utc)
     active = preds[preds["is_active"].astype(bool)].copy()
     active = active[active["row_id"].astype(int) == row_id]
     if active.empty:
@@ -420,16 +442,6 @@ def active_prediction_for_bar(
     if not np.isfinite(prediction):
         raise ValueError(f"Active prediction is not finite: {prediction!r}")
 
-    regime_col = _first_existing_column(
-        regimes,
-        ["regime", "regime_label", "detected_regime", "active_regime"],
-    )
-    if regime_col is None:
-        raise ValueError(f"Regimes artifact has no regime column: {list(regimes.columns)}")
-    regime_value = matches.iloc[-1][regime_col]
-    if pd.isna(regime_value):
-        raise ValueError(f"Regime is missing for row_id={row_id}")
-
     return (
         ActivePrediction(
             row_id=row_id,
@@ -437,7 +449,50 @@ def active_prediction_for_bar(
             active_model_id=str(row.get("active_model_id", row.get("model_name", "unknown"))),
             model_name=str(row.get("model_name", "active")),
         ),
-        str(regime_value),
+        regime,
+    )
+
+
+def regime_matched_lightgbm_prediction_for_bar(
+    predictions_path: Path,
+    regimes_path: Path,
+    *,
+    bar_timestamp_utc: str,
+) -> tuple[ActivePrediction | None, str, str | None]:
+    preds = pd.read_parquet(predictions_path)
+    regimes = pd.read_parquet(regimes_path)
+
+    required_pred = {"row_id", "model_name", "y_pred"}
+    missing_pred = required_pred - set(preds.columns)
+    if missing_pred:
+        raise ValueError(f"Predictions missing required columns: {sorted(missing_pred)}")
+
+    row_id, regime = _regime_for_bar(regimes, bar_timestamp_utc=bar_timestamp_utc)
+    normalized_regime = normalize_regime_label(regime)
+    if normalized_regime is None:
+        return None, regime, f"unsupported regime for LightGBM expert selection: {regime}"
+
+    model_name = f"expert_lightgbm_{normalized_regime}"
+    matched = preds[preds["row_id"].astype(int) == row_id].copy()
+    matched = matched[matched["model_name"].astype(str) == model_name]
+    if matched.empty:
+        return None, regime, f"missing regime-matched expert prediction: {model_name}"
+
+    matched = matched.sort_values(["row_id"], kind="mergesort")
+    row = matched.iloc[-1]
+    prediction = float(row["y_pred"])
+    if not np.isfinite(prediction):
+        return None, regime, f"non-finite regime-matched expert prediction: {model_name}"
+
+    return (
+        ActivePrediction(
+            row_id=row_id,
+            prediction=prediction,
+            active_model_id=model_name,
+            model_name=model_name,
+        ),
+        regime,
+        None,
     )
 
 
@@ -628,23 +683,32 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
             loop_state["last_filled_signal"] = pending
             loop_state["pending_signal"] = None
 
-    active, regime = active_prediction_for_bar(
+    active, regime, selection_error = regime_matched_lightgbm_prediction_for_bar(
         artifacts.predictions_path,
         artifacts.regimes_path,
         bar_timestamp_utc=bar_ts,
     )
-    signal = prediction_to_signal(
-        active.prediction,
-        regime=regime,
-        config=SignalConfig(),
-    )
     expected_fill_ts = bar.timestamp_utc + interval_to_timedelta(cfg.interval)
     pending_signal: dict[str, Any] | None = None
-    decision_reason = "created pending signal for next candle open"
+    selected_model_id = active.active_model_id if active is not None else "unavailable"
+    selected_model_name = active.model_name if active is not None else "unavailable"
+    selected_prediction = active.prediction if active is not None else float("nan")
+
+    if active is None:
+        signal = "HOLD"
+        decision_reason = selection_error or "missing regime-matched expert prediction"
+    else:
+        signal = prediction_to_signal(
+            active.prediction,
+            regime=regime,
+            config=SignalConfig(),
+        )
+        decision_reason = "created pending signal for next candle open"
 
     if signal == "HOLD":
         loop_state["pending_signal"] = None
-        decision_reason = "hold signal recorded without pending fill"
+        if active is not None:
+            decision_reason = "hold signal recorded without pending fill"
     elif not _should_queue_pending_signal(
         signal,
         signal_ts=bar.timestamp_utc,
@@ -654,14 +718,15 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
         loop_state["pending_signal"] = None
         decision_reason = "signal not queued because expected fill is at or after market close"
     else:
+        assert active is not None
         pending_signal = {
             "signal_bar_timestamp_utc": bar_ts,
             "expected_fill_bar_timestamp_utc": utc_iso(expected_fill_ts),
             "signal": signal,
-            "prediction": active.prediction,
+            "prediction": selected_prediction,
             "regime": regime,
-            "active_model_id": active.active_model_id,
-            "model_name": active.model_name,
+            "active_model_id": selected_model_id,
+            "model_name": selected_model_name,
             "row_id": active.row_id,
             "created_at_utc": timestamp,
         }
@@ -674,8 +739,8 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
         timestamp=timestamp,
         price=bar.close_price,
         regime=regime,
-        active_model_id=active.active_model_id,
-        prediction=active.prediction,
+        active_model_id=selected_model_id,
+        prediction=selected_prediction,
         signal=signal,
         reason=decision_reason,
     )
@@ -688,6 +753,12 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
         run_ts=run_ts,
         extra={
             "bar_timestamp_utc": bar_ts,
+            "regime": regime,
+            "selected_model_id": selected_model_id,
+            "selected_model_name": selected_model_name,
+            "prediction": selected_prediction,
+            "signal": signal,
+            "decision_reason": decision_reason,
             "pending_signal": pending_signal,
             "trade": trade,
             "artifacts": {k: str(v) for k, v in asdict(artifacts).items()},
@@ -696,6 +767,11 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
     return {
         "status": "ok",
         "bar_timestamp_utc": bar_ts,
+        "regime": regime,
+        "selected_model_id": selected_model_id,
+        "prediction": selected_prediction,
+        "signal": signal,
+        "decision_reason": decision_reason,
         "pending_signal": pending_signal,
         "trade": trade,
     }
