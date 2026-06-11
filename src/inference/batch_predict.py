@@ -41,6 +41,14 @@ def _load_json_dict(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], data)
 
 
+def _json_file_is_arima_meta(path: Path) -> bool:
+    try:
+        payload = _load_json_dict(path)
+    except Exception:
+        return False
+    return str(payload.get("model_type", "")).lower() == "arima"
+
+
 def _walk_forward_arima_predict(
     y: pd.Series,
     *,
@@ -136,7 +144,10 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
                 }
             )
 
-    # experts: models/experts/<regime>/latest.joblib OR latest.json
+    # experts:
+    #   - LightGBM metadata: models/experts/<regime>/latest.json
+    #   - LightGBM artifact: models/experts/<regime>/latest.joblib
+    #   - ARIMA shadow artifact: models/experts/<regime>/latest.arima.json
     experts_root = models_dir / "experts"
     if experts_root.exists():
         for regime_dir in experts_root.iterdir():
@@ -156,14 +167,21 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
                     }
                 )
 
-            # ARIMA-style expert
-            latest_json = regime_dir / "latest.json"
-            if latest_json.exists():
+            # ARIMA-style expert (prefer the dedicated filename, but keep legacy support)
+            latest_arima_json = regime_dir / "latest.arima.json"
+            legacy_latest_json = regime_dir / "latest.json"
+            arima_meta_path: Path | None = None
+            if latest_arima_json.exists():
+                arima_meta_path = latest_arima_json
+            elif legacy_latest_json.exists() and _json_file_is_arima_meta(legacy_latest_json):
+                arima_meta_path = legacy_latest_json
+
+            if arima_meta_path is not None:
                 models.append(
                     {
                         "model_name": f"expert_arima_{regime_dir.name}",
                         "model_source": "expert",
-                        "model_path": str(latest_json),
+                        "model_path": str(arima_meta_path),
                         "expert_kind": "arima",
                         "regime": regime_dir.name,
                     }

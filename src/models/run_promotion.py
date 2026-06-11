@@ -16,7 +16,17 @@ LOG = logging.getLogger("promotion")
 
 LINEAGE_LATEST = Path("artifacts/lineage/latest.json")
 
-NON_PROMOTABLE_MODELS = {"active"}
+NON_PROMOTABLE_MODEL_RULES = ("active", "expert_arima_*")
+
+
+def is_non_promotable_model(model_name: str) -> bool:
+    name = str(model_name).strip()
+    return name == "active" or name.startswith("expert_arima_")
+
+
+def _raise_if_non_promotable(preferred: str | None, *, role: str) -> None:
+    if preferred is not None and is_non_promotable_model(preferred):
+        raise ValueError(f"Requested {role} model is non-promotable: {preferred}")
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -35,8 +45,10 @@ def _choose_incumbent(wf: pd.DataFrame, preferred: str | None) -> str:
     if "model_name" not in wf.columns:
         raise ValueError("walk-forward table missing required column: model_name")
 
+    _raise_if_non_promotable(preferred, role="incumbent")
+
     names = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
-    names = [n for n in names if n not in NON_PROMOTABLE_MODELS]
+    names = [n for n in names if not is_non_promotable_model(n)]
 
     if not names:
         raise ValueError("walk-forward table has no promotable model_name values")
@@ -49,8 +61,10 @@ def _choose_incumbent(wf: pd.DataFrame, preferred: str | None) -> str:
 
 
 def _choose_challenger(wf: pd.DataFrame, incumbent: str, preferred: str | None) -> str:
+    _raise_if_non_promotable(preferred, role="challenger")
+
     names = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
-    names = [n for n in names if n not in NON_PROMOTABLE_MODELS]
+    names = [n for n in names if not is_non_promotable_model(n)]
 
     others = [n for n in names if n != incumbent]
     if not others:
@@ -164,7 +178,7 @@ def run_promotion(
         )
 
     available_models = sorted(set(map(str, wf["model_name"].dropna().unique().tolist())))
-    promotable_models = [m for m in available_models if m not in NON_PROMOTABLE_MODELS]
+    promotable_models = [m for m in available_models if not is_non_promotable_model(m)]
     LOG.info(
         "Promotion start | run_ts=%s wf_path=%s n_rows=%d n_models=%d",
         run_ts,
@@ -252,7 +266,7 @@ def run_promotion(
         },
         "available_models": available_models,
         "promotable_models": promotable_models,
-        "non_promotable_models": sorted(NON_PROMOTABLE_MODELS),
+        "non_promotable_models": list(NON_PROMOTABLE_MODEL_RULES),
     }
 
     out_path = _promotion_out_path_for_run(run_ts)

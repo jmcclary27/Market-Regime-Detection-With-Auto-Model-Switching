@@ -118,6 +118,8 @@ class ActivePrediction:
     prediction: float
     active_model_id: str
     model_name: str
+    active_model_type: str | None = None
+    model_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -442,15 +444,36 @@ def active_prediction_for_bar(
     if not np.isfinite(prediction):
         raise ValueError(f"Active prediction is not finite: {prediction!r}")
 
+    actual_model_id = str(row.get("active_model_id", row.get("model_name", "unknown")))
+    actual_model_name = (
+        actual_model_id if str(row.get("model_name", "active")) == "active" else str(row["model_name"])
+    )
+
     return (
         ActivePrediction(
             row_id=row_id,
             prediction=prediction,
-            active_model_id=str(row.get("active_model_id", row.get("model_name", "unknown"))),
-            model_name=str(row.get("model_name", "active")),
+            active_model_id=actual_model_id,
+            model_name=actual_model_name,
+            active_model_type=(
+                str(row["active_model_type"]) if pd.notna(row.get("active_model_type")) else None
+            ),
+            model_path=str(row["model_path"]) if pd.notna(row.get("model_path")) else None,
         ),
         regime,
     )
+
+
+def is_live_eligible_prediction(active: ActivePrediction) -> bool:
+    model_id = active.active_model_id.lower().strip()
+    if model_id.startswith("expert_arima_"):
+        return False
+
+    model_path = (active.model_path or "").lower().strip()
+    if model_path.endswith(".json"):
+        return False
+
+    return True
 
 
 def regime_matched_lightgbm_prediction_for_bar(
@@ -683,11 +706,20 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
             loop_state["last_filled_signal"] = pending
             loop_state["pending_signal"] = None
 
-    active, regime, selection_error = regime_matched_lightgbm_prediction_for_bar(
-        artifacts.predictions_path,
-        artifacts.regimes_path,
-        bar_timestamp_utc=bar_ts,
-    )
+    _, regime = _regime_for_bar(pd.read_parquet(artifacts.regimes_path), bar_timestamp_utc=bar_ts)
+    active: ActivePrediction | None = None
+    selection_error: str | None = None
+    try:
+        active, _active_regime = active_prediction_for_bar(
+            artifacts.predictions_path,
+            artifacts.regimes_path,
+            bar_timestamp_utc=bar_ts,
+        )
+        if _active_regime != regime:
+            regime = _active_regime
+    except ValueError as exc:
+        selection_error = str(exc)
+
     expected_fill_ts = bar.timestamp_utc + interval_to_timedelta(cfg.interval)
     pending_signal: dict[str, Any] | None = None
     selected_model_id = active.active_model_id if active is not None else "unavailable"
@@ -696,7 +728,10 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
 
     if active is None:
         signal = "HOLD"
-        decision_reason = selection_error or "missing regime-matched expert prediction"
+        decision_reason = selection_error or "missing active prediction"
+    elif not is_live_eligible_prediction(active):
+        signal = "HOLD"
+        decision_reason = f"active model not live-eligible: {active.active_model_id}"
     else:
         signal = prediction_to_signal(
             active.prediction,
@@ -707,7 +742,10 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
 
     if signal == "HOLD":
         loop_state["pending_signal"] = None
-        if active is not None:
+        if (
+            active is not None
+            and decision_reason == "created pending signal for next candle open"
+        ):
             decision_reason = "hold signal recorded without pending fill"
     elif not _should_queue_pending_signal(
         signal,

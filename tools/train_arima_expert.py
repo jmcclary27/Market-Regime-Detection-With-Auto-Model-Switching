@@ -422,6 +422,7 @@ def main() -> None:
             "model_type": "arima",
             "model_name": cfg.model_name,
             "regime": cfg.regime,
+            "shadow_only": True,
             "order": {"p": cfg.p, "d": cfg.d, "q": cfg.q},
             "trend": cfg.trend,
             "refit_interval": cfg.refit_interval,
@@ -440,7 +441,7 @@ def main() -> None:
         meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
         mlflow.log_artifact(str(meta_path))
 
-        latest_meta_path = latest_dir / "latest.json"
+        latest_meta_path = latest_dir / "latest.arima.json"
         latest_meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
         mlflow.set_tag("expert_type", "arima")

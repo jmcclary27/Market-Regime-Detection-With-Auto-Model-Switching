@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 from src.deploy.switcher import SwitchConfig, run_switcher
 
@@ -51,8 +52,10 @@ def test_switcher_promotes_and_updates_registry(tmp_path: Path) -> None:
     # Assert registry pointer updated
     active_yaml = tmp_path / "registry" / "active_model.yaml"
     assert active_yaml.exists()
-    text = active_yaml.read_text(encoding="utf-8")
-    assert "expert_bullish" in text
+    payload = yaml.safe_load(active_yaml.read_text(encoding="utf-8"))
+    assert payload["active"]["model_id"] == "expert_bullish"
+    assert payload["active"]["model_type"] == "expert"
+    assert payload["active"]["regime"] == "bullish"
 
 
 def test_switcher_holds_when_within_margins(tmp_path: Path) -> None:

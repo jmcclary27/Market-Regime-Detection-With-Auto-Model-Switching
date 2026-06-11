@@ -172,7 +172,6 @@ def run_pipeline(
         LOG.exception("MLflow setup failed, continuing without MLflow")
 
     # ---- imports ----
-    from src.deploy.switcher import run as switch_run
     from src.features.run_features import run as features_run
     from src.inference.batch_predict import run_stage as predict_run
     from src.ingestion.run_ingestion import run as ingest_run
@@ -560,13 +559,6 @@ def run_pipeline(
             _ = out
 
         step("promotion", _promotion)
-
-    # ---- switch ----
-    if cfg.mode == "pipeline":
-        if replay:
-            LOG.info("Replay enabled, skipping switch step")
-        else:
-            step("switch", switch_run)
 
     # ---- lineage update to include eval/promotion artifacts ----
     if (not replay) and cfg.mode == "pipeline":

@@ -21,11 +21,13 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 @dataclass(frozen=True)
 class TrainConfig:
     features_path: str
+    regimes_path: str | None
     target_col: str
     target_expr: str | None
     target_shift: int
     group_col: str | None
     vol_window: int | None
+    min_regime_rows: int
 
     # NEW: which regime this expert is for (controls output path + naming)
     regime: str
@@ -55,6 +57,11 @@ def _parse_args() -> TrainConfig:
     p = argparse.ArgumentParser(description="Train a LightGBM expert and log to MLflow.")
 
     p.add_argument("--features-path", required=True, help="Path to features data, parquet or csv.")
+    p.add_argument(
+        "--regimes-path",
+        default=None,
+        help="Optional regimes parquet/csv to merge when --features-path lacks a regime column.",
+    )
 
     # Target options:
     p.add_argument(
@@ -91,6 +98,12 @@ def _parse_args() -> TrainConfig:
         required=True,
         choices=["bullish", "bearish", "sideways"],
         help="Which regime expert this model is for. Writes to models/experts/<regime>/",
+    )
+    p.add_argument(
+        "--min-regime-rows",
+        type=int,
+        default=100,
+        help="Minimum required rows for the selected regime after target prep.",
     )
 
     p.add_argument("--model-name", default="lightgbm_expert", help="Logical name for this expert.")
@@ -146,11 +159,13 @@ def _parse_args() -> TrainConfig:
 
     return TrainConfig(
         features_path=args.features_path,
+        regimes_path=args.regimes_path,
         target_col=args.target_col,
         target_expr=args.target_expr,
         target_shift=args.target_shift,
         group_col=args.group_col,
         vol_window=args.vol_window,
+        min_regime_rows=args.min_regime_rows,
         regime=args.regime,
         model_name=args.model_name,
         experiment_name=args.experiment_name,
@@ -195,6 +210,45 @@ def _read_df(path: str) -> pd.DataFrame:
 
 def _safe_to_datetime(s: pd.Series) -> pd.Series:
     return pd.to_datetime(s, errors="coerce", utc=True)
+
+
+def _ensure_regime_columns(df: pd.DataFrame, cfg: TrainConfig) -> pd.DataFrame:
+    if "regime" in df.columns:
+        return df
+
+    if not cfg.regimes_path:
+        raise KeyError(
+            "Input data does not contain a 'regime' column. "
+            "Pass --regimes-path or train directly from data/regimes/latest.parquet."
+        )
+
+    join_col = cfg.time_col or "timestamp"
+    if join_col not in df.columns:
+        raise KeyError(
+            f"Cannot merge regimes because join column '{join_col}' is missing from features. "
+            f"Available columns: {sorted(df.columns)}"
+        )
+
+    reg_df = _read_df(cfg.regimes_path)
+    if join_col not in reg_df.columns:
+        raise KeyError(
+            f"Cannot merge regimes because join column '{join_col}' is missing from regimes file. "
+            f"Available columns: {sorted(reg_df.columns)}"
+        )
+    if "regime" not in reg_df.columns:
+        raise KeyError(
+            f"Regimes file must contain a 'regime' column. Available columns: {sorted(reg_df.columns)}"
+        )
+
+    reg_cols = [join_col, "regime"]
+    if "regime_explanation" in reg_df.columns:
+        reg_cols.append("regime_explanation")
+
+    reg_df = reg_df.loc[:, reg_cols].drop_duplicates(subset=[join_col], keep="last")
+    merged = df.merge(reg_df, on=join_col, how="left")
+    if "regime" not in merged.columns:
+        raise KeyError("Failed to merge regime labels into the training dataframe.")
+    return merged
 
 
 def _time_ordered_split(
@@ -308,8 +362,31 @@ def _build_target(df: pd.DataFrame, cfg: TrainConfig) -> pd.DataFrame:
     return out
 
 
-def main() -> None:
-    cfg = _parse_args()
+def _finite_nunique(values: np.ndarray) -> int:
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0
+    return int(np.unique(finite).size)
+
+
+def _preserve_legacy_arima_latest(latest_dir: Path) -> None:
+    legacy = latest_dir / "latest.json"
+    new_path = latest_dir / "latest.arima.json"
+    if not legacy.exists() or new_path.exists():
+        return
+
+    try:
+        payload = json.loads(legacy.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    if isinstance(payload, dict) and str(payload.get("model_type", "")).lower() == "arima":
+        new_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def run(cfg: TrainConfig) -> Path:
+    if cfg.min_regime_rows <= 0:
+        raise ValueError("--min-regime-rows must be >= 1")
 
     if cfg.mlflow_tracking_uri:
         mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
@@ -317,9 +394,7 @@ def main() -> None:
     mlflow.set_experiment(cfg.experiment_name)
 
     df = _read_df(cfg.features_path)
-
-    # Drop junk columns if present
-    df = df.drop(columns=[c for c in cfg.drop_cols if c in df.columns], errors="ignore")
+    df = _ensure_regime_columns(df, cfg)
 
     # Time ordering if requested and present
     if cfg.time_col and cfg.time_col in df.columns:
@@ -333,11 +408,21 @@ def main() -> None:
 
     # Remove missing targets
     df = df[df[cfg.target_col].notna()].reset_index(drop=True)
+    if "regime" not in df.columns:
+        raise KeyError("Training dataframe is missing required 'regime' column after target prep.")
+
+    regime_series = df["regime"].astype("string").str.lower().str.strip()
+    df = df.loc[regime_series == cfg.regime].reset_index(drop=True)
+    if len(df) < cfg.min_regime_rows:
+        raise ValueError(
+            f"Not enough rows for regime '{cfg.regime}' after target prep: "
+            f"{len(df)} < {cfg.min_regime_rows}"
+        )
 
     # Split
     train_df, val_df, test_df = _time_ordered_split(df, cfg.train_frac, cfg.val_frac, cfg.test_frac)
 
-    exclude_cols = list(cfg.id_cols)
+    exclude_cols = list(dict.fromkeys([*cfg.id_cols, *cfg.drop_cols]))
 
     X_train, y_train = _make_xy(train_df, cfg.target_col, exclude_cols)
     X_val, y_val = _make_xy(val_df, cfg.target_col, exclude_cols)
@@ -379,18 +464,21 @@ def main() -> None:
 
     latest_dir = root / cfg.regime
     latest_dir.mkdir(parents=True, exist_ok=True)
+    _preserve_legacy_arima_latest(latest_dir)
 
     with mlflow.start_run(run_name=cfg.run_name) as run:
         mlflow.log_params(
             {
                 "model_name": cfg.model_name,
                 "regime": cfg.regime,
+                "regimes_path": cfg.regimes_path or "",
                 "features_path": cfg.features_path,
                 "target_col": cfg.target_col,
                 "target_expr": cfg.target_expr or "",
                 "target_shift": cfg.target_shift,
                 "group_col": cfg.group_col or "",
                 "vol_window": int(cfg.vol_window) if cfg.vol_window is not None else 0,
+                "min_regime_rows": cfg.min_regime_rows,
                 "train_frac": cfg.train_frac,
                 "val_frac": cfg.val_frac,
                 "test_frac": cfg.test_frac,
@@ -428,12 +516,21 @@ def main() -> None:
 
         val_pred = model.predict(X_val)
         test_pred = model.predict(X_test)
+        val_pred_nunique = _finite_nunique(np.asarray(val_pred, dtype=float))
+        test_pred_nunique = _finite_nunique(np.asarray(test_pred, dtype=float))
+        if val_pred_nunique <= 1 or test_pred_nunique <= 1:
+            raise ValueError(
+                "Refusing to save LightGBM expert because predictions collapsed to a constant. "
+                f"val_pred_nunique={val_pred_nunique} test_pred_nunique={test_pred_nunique}"
+            )
 
         val_metrics = _metrics(y_val.to_numpy(), val_pred)
         test_metrics = _metrics(y_test.to_numpy(), test_pred)
 
         mlflow.log_metrics({f"val_{k}": v for k, v in val_metrics.items()})
         mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
+        mlflow.log_metric("val_pred_nunique", float(val_pred_nunique))
+        mlflow.log_metric("test_pred_nunique", float(test_pred_nunique))
 
         # Save feature list (local)
         feature_cols_path = out_dir / "feature_columns.json"
@@ -451,6 +548,39 @@ def main() -> None:
 
         latest_model_path = latest_dir / "latest.joblib"
         joblib.dump(model, latest_model_path)
+
+        metadata = {
+            "model_type": "lightgbm",
+            "model_name": cfg.model_name,
+            "regime": cfg.regime,
+            "features_path": cfg.features_path,
+            "regimes_path": cfg.regimes_path,
+            "target_col": cfg.target_col,
+            "target_expr": cfg.target_expr,
+            "target_shift": cfg.target_shift,
+            "group_col": cfg.group_col,
+            "vol_window": cfg.vol_window,
+            "min_regime_rows": cfg.min_regime_rows,
+            "train_frac": cfg.train_frac,
+            "val_frac": cfg.val_frac,
+            "test_frac": cfg.test_frac,
+            "n_rows_used": int(len(df)),
+            "n_train": int(len(train_df)),
+            "n_val": int(len(val_df)),
+            "n_test": int(len(test_df)),
+            "n_features": int(len(cols)),
+            "feature_columns": cols,
+            "val_metrics": val_metrics,
+            "test_metrics": test_metrics,
+            "val_pred_nunique": int(val_pred_nunique),
+            "test_pred_nunique": int(test_pred_nunique),
+            "run_id": run.info.run_id,
+            "created_utc": datetime.utcnow().isoformat() + "Z",
+        }
+        metadata_path = out_dir / "metadata.json"
+        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        mlflow.log_artifact(str(metadata_path))
+        (latest_dir / "latest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
         # Log model to MLflow (keep your current behavior)
         try:
@@ -474,6 +604,12 @@ def main() -> None:
     print(f"Wrote: {out_dir}")
     print(f"Wrote: {latest_dir}")
     print("done")
+    return out_dir
+
+
+def main() -> None:
+    cfg = _parse_args()
+    run(cfg)
 
 
 if __name__ == "__main__":

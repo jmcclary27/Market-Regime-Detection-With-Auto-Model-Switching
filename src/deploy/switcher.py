@@ -8,6 +8,8 @@ from typing import Any
 
 import pandas as pd
 
+from src.registry.registry import ActiveModelRef, write_active
+
 # ---------- Config ----------
 
 
@@ -88,8 +90,54 @@ def append_event(events_path: Path, event: dict[str, Any]) -> None:
 
 
 def write_active_model_yaml(registry_path: Path, model_id: str) -> None:
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-    registry_path.write_text(f"model_id: {model_id}\n", encoding="utf-8")
+    def _infer_regime(candidate_model_id: str) -> str | None:
+        for regime in ("bullish", "bearish", "sideways"):
+            if candidate_model_id == f"expert_{regime}" or candidate_model_id.endswith(f"_{regime}"):
+                return regime
+        return None
+
+    regime = _infer_regime(model_id)
+    if model_id == "baseline":
+        ref = ActiveModelRef(
+            model_type="baseline",
+            model_id=model_id,
+            version="latest",
+            artifact_path=Path("models/baseline/latest.joblib"),
+            regime=None,
+            metadata_path=Path("models/baseline/latest.json"),
+        )
+    elif model_id.startswith("expert_arima_") and regime is not None:
+        ref = ActiveModelRef(
+            model_type="expert",
+            model_id=model_id,
+            version="0",
+            artifact_path=Path(f"models/experts/{regime}/latest.arima.json"),
+            regime=regime,
+            metadata_path=None,
+        )
+    elif (
+        model_id.startswith("expert_lightgbm_")
+        or model_id in {"expert_bullish", "expert_bearish", "expert_sideways"}
+    ) and regime is not None:
+        ref = ActiveModelRef(
+            model_type="expert",
+            model_id=model_id,
+            version="0",
+            artifact_path=Path(f"models/experts/{regime}/latest.joblib"),
+            regime=regime,
+            metadata_path=Path(f"models/experts/{regime}/latest.json"),
+        )
+    else:
+        ref = ActiveModelRef(
+            model_type="pretrained",
+            model_id=model_id,
+            version="0",
+            artifact_path=Path(f"models/pretrained/{model_id}.joblib"),
+            regime=None,
+            metadata_path=None,
+        )
+
+    write_active(ref, active_file=registry_path)
 
 
 def infer_model_id_col(df: pd.DataFrame | None) -> str | None:
