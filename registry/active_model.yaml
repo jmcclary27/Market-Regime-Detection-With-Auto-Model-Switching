@@ -4,4 +4,5 @@ active:
   model_id: expert_lightgbm_sideways
   version: '0'
   artifact_path: models/experts/sideways/latest.joblib
-updated_at: '2026-05-19T13:06:57Z'
+  metadata_path: models/experts/sideways/latest.json
+updated_at: '2026-06-22T16:57:49Z'

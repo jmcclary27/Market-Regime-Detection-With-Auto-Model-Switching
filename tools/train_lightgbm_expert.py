@@ -17,6 +17,11 @@ import pandas as pd
 from lightgbm import LGBMRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
+from src.features.stationary import (
+    augment_pairwise_stationary_features,
+    summarize_feature_ranges,
+)
+
 
 @dataclass(frozen=True)
 class TrainConfig:
@@ -403,6 +408,10 @@ def run(cfg: TrainConfig) -> Path:
     else:
         df = df.reset_index(drop=True)
 
+    # Add stationary / relative pairwise features before target shifting so the
+    # raw columns remain available for feature engineering.
+    df, stationary_cols = augment_pairwise_stationary_features(df)
+
     # Build / shift target
     df = _build_target(df, cfg)
 
@@ -435,6 +444,8 @@ def run(cfg: TrainConfig) -> Path:
     cols = list(X_train.columns)
     X_val = X_val.reindex(columns=cols)
     X_test = X_test.reindex(columns=cols)
+
+    feature_range_stats = summarize_feature_ranges(X_train, cols)
 
     user_params = _load_params(cfg.params_json)
 
@@ -570,6 +581,8 @@ def run(cfg: TrainConfig) -> Path:
             "n_test": int(len(test_df)),
             "n_features": int(len(cols)),
             "feature_columns": cols,
+            "stationary_feature_columns": stationary_cols,
+            "feature_range_stats": feature_range_stats,
             "val_metrics": val_metrics,
             "test_metrics": test_metrics,
             "val_pred_nunique": int(val_pred_nunique),

@@ -9,7 +9,16 @@ from typing import Any, cast
 
 import pandas as pd
 
-from src.models.promotion import PromotionConfig, decide_promotion, summarize_walkforward
+from src.models.promotion import (
+    PromotionConfig,
+    PromotionDecision,
+    decide_promotion,
+    summarize_walkforward,
+)
+from src.models.promotion_guard import (
+    PromotionGuardResult,
+    evaluate_candidate_promotion_guard,
+)
 from src.registry.registry import ActiveModelRef, write_active
 
 LOG = logging.getLogger("promotion")
@@ -31,6 +40,19 @@ def _raise_if_non_promotable(preferred: str | None, *, role: str) -> None:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+
+
+def _lineage_features_path(lineage: dict[str, Any]) -> Path | None:
+    artifacts = lineage.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return None
+    features = artifacts.get("features_parquet")
+    if not isinstance(features, dict):
+        return None
+    path = features.get("path")
+    if path in (None, ""):
+        return None
+    return Path(str(path))
 
 
 def _portfolio_metrics_path_for_run(run_ts: str) -> Path:
@@ -122,13 +144,20 @@ def _resolve_ref_from_predictions(model_name: str, predictions_path: Path) -> Ac
 
     # Optional: infer regime from your model_name conventions for expert models
     regime: str | None = None
+    metadata_path: Path | None = None
     if model_source == "expert":
         # expected forms:
         #   expert_lightgbm_<regime>
         #   expert_arima_<regime>
-        parts = model_name.split("_")
-        if len(parts) >= 3:
-            regime = parts[-1]
+        #   expert_<regime>  (legacy alias)
+        for maybe_regime in ("bullish", "bearish", "sideways"):
+            if model_name == f"expert_{maybe_regime}" or model_name.endswith(
+                f"_{maybe_regime}"
+            ):
+                regime = maybe_regime
+                break
+        if regime is not None and not model_name.startswith("expert_arima_"):
+            metadata_path = Path(f"models/experts/{regime}/latest.json")
 
     return ActiveModelRef(
         model_type=model_source,  # baseline | expert | pretrained
@@ -136,7 +165,7 @@ def _resolve_ref_from_predictions(model_name: str, predictions_path: Path) -> Ac
         version="0",
         artifact_path=model_path,
         regime=regime,
-        metadata_path=None,
+        metadata_path=metadata_path,
     )
 
 
@@ -203,16 +232,35 @@ def run_promotion(
     # Resolve the actually-selected challenger to an artifact path (source of truth: predictions)
     preds_path = Path("data/predictions/latest.parquet")
     resolved_ref = _resolve_ref_from_predictions(challenger, preds_path)
+    lineage_features_path = _lineage_features_path(lineage)
 
     # Summaries + decision
     chal = summarize_walkforward(wf, model_name=challenger, cfg=cfg)
     inc = summarize_walkforward(wf, model_name=incumbent, cfg=cfg)
 
-    decision = decide_promotion(
+    raw_decision = decide_promotion(
         challenger_summary=chal,
         incumbent_summary=inc,
         cfg=cfg,
     )
+
+    promotion_guard: PromotionGuardResult | None = None
+    decision = raw_decision
+    if raw_decision.promote:
+        promotion_guard = evaluate_candidate_promotion_guard(
+            candidate_ref=resolved_ref,
+            predictions_path=preds_path,
+            current_features_path=lineage_features_path,
+            candidate_model_name=challenger,
+        )
+        if not promotion_guard.allowed:
+            decision = PromotionDecision(
+                promote=False,
+                reason=promotion_guard.reason,
+                challenger=raw_decision.challenger,
+                incumbent=raw_decision.incumbent,
+                deltas=raw_decision.deltas,
+            )
 
     # A short, human-friendly reason string for logs + top-level output
     reason = getattr(decision, "reason", None)
@@ -234,6 +282,7 @@ def run_promotion(
         "promoted": promoted,
         "reason": str(reason),
         "pointer_written": bool(promoted and write_pointer),
+        "raw_decision": asdict(raw_decision),
         # What we actually resolved + would write
         "resolved_challenger_ref": {
             "model_type": resolved_ref.model_type,
@@ -245,6 +294,7 @@ def run_promotion(
             if resolved_ref.metadata_path is not None
             else None,
         },
+        "promotion_guard": asdict(promotion_guard) if promotion_guard is not None else None,
         # Keep the passed challenger_ref visible for debugging (but do NOT write it)
         "passed_challenger_ref": {
             "model_type": challenger_ref.model_type,

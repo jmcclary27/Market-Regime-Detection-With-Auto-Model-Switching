@@ -15,6 +15,7 @@ import pandas as pd
 from numpy.typing import NDArray
 from statsmodels.tsa.arima.model import ARIMA
 
+from src.features.stationary import augment_pairwise_stationary_features
 from src.registry.registry import ACTIVE_FILE, RegistryError, load_active_model
 
 
@@ -321,6 +322,13 @@ def _drop_nan_rows(X: pd.DataFrame, row_ids: pd.Index) -> tuple[pd.DataFrame, pd
     return X_clean, row_ids_clean
 
 
+def _finite_nunique(values: np.ndarray) -> int:
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0
+    return int(np.unique(finite).size)
+
+
 def _get_active_fields(
     active_ref_dict: dict[str, Any] | None,
 ) -> tuple[str | None, str | None, str | None, str | None]:
@@ -365,6 +373,7 @@ def run(config: BatchPredictConfig) -> Path:
     row_ids = pd.Index(X_raw.index.astype(int))
 
     X, converted_cols, dropped_cols = _make_numeric_X(X_raw)
+    X, added_stationary_cols = augment_pairwise_stationary_features(X)
     nan_rows = int((~X.replace([float("inf"), float("-inf")], pd.NA).notna().all(axis=1)).sum())
 
     if X.shape[1] == 0:
@@ -406,6 +415,7 @@ def run(config: BatchPredictConfig) -> Path:
     active_model_type, active_model_id, active_model_version, active_regime = _get_active_fields(
         active_ref_dict
     )
+    active_model_source = active_model_type or "expert"
 
     rows: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
@@ -456,7 +466,7 @@ def run(config: BatchPredictConfig) -> Path:
                         {
                             "row_id": int(rid),
                             "model_name": "active",
-                            "model_source": "registry",
+                            "model_source": active_model_source,
                             "y_pred": _safe_pred_value(pred),
                             "inference_ts": ts,
                             "features_path": str(config.features_path),
@@ -486,7 +496,7 @@ def run(config: BatchPredictConfig) -> Path:
                         {
                             "row_id": int(rid),
                             "model_name": "active",
-                            "model_source": "registry",
+                            "model_source": active_model_source,
                             "y_pred": _safe_pred_value(pred),
                             "inference_ts": ts,
                             "features_path": str(config.features_path),
@@ -502,7 +512,7 @@ def run(config: BatchPredictConfig) -> Path:
             failed.append(
                 {
                     "model_name": "active",
-                    "model_source": "registry",
+                    "model_source": active_model_source,
                     "model_path": str(active_artifact_path),
                     "error": repr(e),
                 }
@@ -513,57 +523,6 @@ def run(config: BatchPredictConfig) -> Path:
         model_path = Path(spec["model_path"])
         try:
             if spec.get("expert_kind") == "arima":
-                meta = _load_json_dict(model_path)
-
-                order = (
-                    int(meta["order"]["p"]),
-                    int(meta["order"]["d"]),
-                    int(meta["order"]["q"]),
-                )
-                trend = str(meta.get("trend", "n"))
-                refit_interval = int(meta.get("refit_interval", 50))
-                train_window_raw = meta.get("train_window", None)
-                train_window = (
-                    int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
-                )
-                min_train_size = int(meta.get("min_train_size", 120))
-
-                target_col = str(meta.get("target_col", "log_return_1_x"))
-                if target_col not in df_full.columns:
-                    raise RuntimeError(
-                        f"ARIMA target_col '{target_col}' not in df columns: {sorted(df_full.columns)}"
-                    )
-
-                # IMPORTANT: do NOT shift here; series predictor already produces 1-step-ahead aligned to row i.
-                y = df_full[target_col].astype(float).fillna(0.0)
-
-                y_pred = _walk_forward_arima_predict(
-                    y,
-                    order=order,
-                    trend=trend,
-                    refit_interval=refit_interval,
-                    train_window=train_window,
-                    min_train_size=min_train_size,
-                    fallback=0.0,
-                )
-
-                for rid, pred in zip(row_ids, y_pred.to_numpy(), strict=False):
-                    rows.append(
-                        {
-                            "row_id": int(rid),
-                            "model_name": spec["model_name"],
-                            "model_source": spec["model_source"],
-                            "y_pred": _safe_pred_value(pred),
-                            "inference_ts": ts,
-                            "features_path": str(config.features_path),
-                            "model_path": str(model_path),
-                            "is_active": False,
-                            "active_model_type": active_model_type,
-                            "active_model_id": active_model_id,
-                            "active_model_version": active_model_version,
-                            "active_regime": active_regime,
-                        }
-                    )
                 continue
 
             loaded = joblib.load(model_path)
@@ -576,6 +535,17 @@ def run(config: BatchPredictConfig) -> Path:
                 raise RuntimeError("After dropping NaNs, no rows remain for this model inference.")
 
             preds = model.predict(X_clean)
+            pred_nunique = _finite_nunique(np.asarray(preds, dtype=float))
+            if pred_nunique <= 1:
+                failed.append(
+                    {
+                        "model_name": spec.get("model_name", "unknown"),
+                        "model_source": spec.get("model_source", "unknown"),
+                        "model_path": str(model_path),
+                        "error": "degenerate constant predictions, skipped from latest batch",
+                    }
+                )
+                continue
 
             for rid, pred in zip(row_ids_clean, preds, strict=False):
                 rows.append(
@@ -642,6 +612,7 @@ def run(config: BatchPredictConfig) -> Path:
         "feature_preprocessing": {
             "converted_datetime_cols": converted_cols,
             "dropped_non_numeric_cols": dropped_cols,
+            "added_stationary_cols": added_stationary_cols,
             "final_num_features": int(X.shape[1]),
         },
         "active_registry": {

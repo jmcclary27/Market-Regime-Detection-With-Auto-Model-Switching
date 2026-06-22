@@ -8,6 +8,7 @@ from typing import Any
 
 import pandas as pd
 
+from src.models.promotion_guard import evaluate_candidate_promotion_guard
 from src.registry.registry import ActiveModelRef, write_active
 
 # ---------- Config ----------
@@ -493,14 +494,61 @@ def run_switcher(
 
     active_after = active_model_id
     event_type = "canary_evaluated"
+    decision_label = decision
 
     if decision == "promote":
-        active_after = resolved_candidate_id
-        event_type = "promoted"
-        if config.update_registry_on_promote:
-            project_root = data_dir.parent
-            registry_path = project_root / "registry" / "active_model.yaml"
-            write_active_model_yaml(registry_path, resolved_candidate_id)
+        project_root = data_dir.parent
+        predictions_path = project_root / "data" / "predictions" / "latest.parquet"
+        candidate_type = "baseline"
+        if resolved_candidate_id.startswith("expert_lightgbm_") or resolved_candidate_id.startswith(
+            "expert_arima_"
+        ) or resolved_candidate_id in {"expert_bullish", "expert_bearish", "expert_sideways"}:
+            candidate_type = "expert"
+        elif resolved_candidate_id != "baseline":
+            candidate_type = "pretrained"
+
+        regime = None
+        for maybe_regime in ("bullish", "bearish", "sideways"):
+            if resolved_candidate_id == f"expert_{maybe_regime}" or resolved_candidate_id.endswith(
+                f"_{maybe_regime}"
+            ):
+                regime = maybe_regime
+                break
+
+        guard = evaluate_candidate_promotion_guard(
+            candidate_ref=ActiveModelRef(
+                model_type=candidate_type,
+                model_id=resolved_candidate_id,
+                version="0",
+                artifact_path=(
+                    Path(f"models/experts/{regime}/latest.joblib")
+                    if candidate_type == "expert" and regime is not None
+                    else Path(f"models/pretrained/{resolved_candidate_id}.joblib")
+                    if candidate_type == "pretrained"
+                    else Path("models/baseline/latest.joblib")
+                ),
+                regime=regime,
+                metadata_path=(
+                    project_root / "models" / "experts" / regime / "latest.json"
+                    if regime is not None
+                    and candidate_type == "expert"
+                    and not resolved_candidate_id.startswith("expert_arima_")
+                    else None
+                ),
+            ),
+            predictions_path=predictions_path,
+            candidate_model_name=resolved_candidate_id,
+        )
+        if guard.allowed:
+            active_after = resolved_candidate_id
+            event_type = "promoted"
+            if config.update_registry_on_promote:
+                registry_path = project_root / "registry" / "active_model.yaml"
+                write_active_model_yaml(registry_path, resolved_candidate_id)
+        else:
+            decision_label = "blocked"
+            event_type = "blocked"
+            reason = f"{reason}; promotion_guard={guard.reason}"
 
     elif decision == "rollback":
         event_type = "rollback"
@@ -522,7 +570,7 @@ def run_switcher(
             "metric_name": config.metric_name,
             "active_metric_value": active_metric,
             "candidate_metric_value": candidate_metric,
-            "decision": decision,
+            "decision": decision_label,
             "reason": f"{reason} regime={latest_regime}",
         },
     )

@@ -106,6 +106,17 @@ def test_train_lightgbm_experts_are_regime_specific_and_non_constant(tmp_path: P
         assert metadata["val_pred_nunique"] > 1
         assert metadata["test_pred_nunique"] > 1
         assert metadata["n_rows_used"] >= 100
+        assert metadata["n_features"] > 6
+        assert metadata["stationary_feature_columns"] == [
+            "trend_x",
+            "trend_y",
+            "trend_gap",
+            "return_gap",
+            "close_ratio",
+            "sma_ratio",
+        ]
+        assert "feature_range_stats" in metadata
+        assert "trend_gap" in metadata["feature_range_stats"]
 
         hashes[regime] = _model_hash(latest_dir / "latest.joblib")
 
