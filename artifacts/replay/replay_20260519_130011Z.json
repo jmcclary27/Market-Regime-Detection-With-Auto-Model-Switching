@@ -1,0 +1,62 @@
+{
+  "checked_artifacts": [
+    {
+      "actual_sha256": "2299655cd289e0fce4d8a5c58b30a39881929bde010c3f054d625e285f0335c7",
+      "exact_match": false,
+      "expected_sha256": "c9feda47919ae7e032ed3a599724e66c9a8441716c27a20f48a2c00757af837a",
+      "label": "raw_csv",
+      "original_path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv",
+      "replay_path": null
+    },
+    {
+      "actual_sha256": "b1cadb1534b9cb060a3a82ded8ba4b4aed2d7a99b60d641a55f7406130e4acd6",
+      "exact_match": false,
+      "expected_sha256": "5b8ae4978d745ca60c5b139cfb3cbbcfe72d629b260353470550458886ce43a8",
+      "label": "features_parquet",
+      "original_path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\features\\20260519_130011Z.parquet",
+      "replay_path": "data\\features\\replay_20260519_130011Z.parquet"
+    },
+    {
+      "actual_sha256": "3faee6fd086f99fd635037feef75995cc6db05455a6b395a47491acc98d5e4af",
+      "exact_match": false,
+      "expected_sha256": "ebe3c166163e92d4b9da4ed66b023d23ab32bb7cb5d2a18a985c65b62dea118d",
+      "label": "regimes_parquet",
+      "original_path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\regimes\\20260519_130011Z.parquet",
+      "replay_path": "data\\regimes\\replay_20260519_130011Z.parquet"
+    },
+    {
+      "actual_sha256": "07b95528aaa1b25556a14d8a0214108e1c7302a2e8371f539d945161a430b82f",
+      "exact_match": false,
+      "expected_sha256": "80383b765d6bb2e10241866dcd6b59e133c7d1050286ad9997106a1d5375726d",
+      "label": "predictions_parquet",
+      "original_path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\predictions\\predictions_20260519_130011Z.parquet",
+      "replay_path": "data\\predictions\\predictions_replay_20260519_130011Z.parquet"
+    }
+  ],
+  "exact_pass": false,
+  "failure_breakdown": [
+    {
+      "kind": "raw_csv_integrity",
+      "path": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\latest.csv"
+    },
+    {
+      "kind": "artifact_hash_mismatch",
+      "label": "features_parquet"
+    },
+    {
+      "kind": "artifact_hash_mismatch",
+      "label": "regimes_parquet"
+    },
+    {
+      "kind": "artifact_hash_mismatch",
+      "label": "predictions_parquet"
+    },
+    {
+      "kind": "prediction_keys_differ"
+    }
+  ],
+  "max_prediction_drift": null,
+  "run_ts": "20260519_130011Z",
+  "semantic_pass": false,
+  "status": "failed"
+}

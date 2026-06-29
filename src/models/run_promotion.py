@@ -4,11 +4,13 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 
+from src.deploy.history import append_deployment_event
 from src.models.promotion import (
     PromotionConfig,
     PromotionDecision,
@@ -270,6 +272,13 @@ def run_promotion(
         reason = "see decision object"
 
     promoted = bool(getattr(decision, "promote", False))
+    event_type = "promoted" if promoted else "hold"
+    decision_label = "promote" if promoted else "hold"
+    if raw_decision.promote and not promoted:
+        event_type = "blocked"
+        decision_label = "blocked"
+
+    event_ts = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     # Build output artifact
     out: dict[str, Any] = {
@@ -328,6 +337,7 @@ def run_promotion(
     latest_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
 
     # Write pointer if promoted
+    pointer_written = False
     if promoted and write_pointer:
         LOG.warning(
             "MODEL PROMOTED | run_ts=%s challenger=%s incumbent=%s -> writing active pointer: %s",
@@ -336,7 +346,15 @@ def run_promotion(
             incumbent,
             resolved_ref.artifact_path,
         )
-        write_active(resolved_ref)
+        pointer_written = write_active(
+            resolved_ref,
+            event_context={
+                "source": "run_promotion",
+                "run_ts": run_ts,
+                "reason": str(reason),
+                "ts": event_ts,
+            },
+        )
     else:
         LOG.info(
             "Model not promoted | run_ts=%s promoted=%s reason=%s",
@@ -344,6 +362,32 @@ def run_promotion(
             promoted,
             str(reason),
         )
+
+    out["pointer_written"] = bool(pointer_written and promoted and write_pointer)
+    out_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
+    latest_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
+
+    append_deployment_event(
+        Path("data/deployments/events.parquet"),
+        {
+            "ts": event_ts,
+            "run_ts": run_ts,
+            "source": "run_promotion",
+            "event_type": event_type,
+            "decision": decision_label,
+            "active_model_id_before": incumbent,
+            "candidate_model_id": challenger,
+            "active_model_id_after": challenger if promoted else incumbent,
+            "metric_name": cfg.sharpe_col,
+            "active_metric_value": inc.get("sharpe"),
+            "candidate_metric_value": chal.get("sharpe"),
+            "active_max_drawdown": inc.get("max_drawdown"),
+            "candidate_max_drawdown": chal.get("max_drawdown"),
+            "promotion_guard_allowed": promotion_guard.allowed if promotion_guard is not None else None,
+            "pointer_written": bool(pointer_written and promoted and write_pointer),
+            "reason": str(reason),
+        },
+    )
 
     LOG.info("Promotion wrote artifact | %s", out_path)
     return out

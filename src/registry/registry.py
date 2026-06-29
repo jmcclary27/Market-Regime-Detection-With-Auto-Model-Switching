@@ -8,10 +8,29 @@ from pathlib import Path
 from typing import Any, cast
 
 import joblib
+import pandas as pd
 import yaml
 
 REGISTRY_DIR = Path("registry")
 ACTIVE_FILE = REGISTRY_DIR / "active_model.yaml"
+HISTORY_FILE = REGISTRY_DIR / "history.parquet"
+REGISTRY_HISTORY_COLUMNS = [
+    "ts",
+    "event_type",
+    "source",
+    "run_ts",
+    "reason",
+    "previous_model_type",
+    "previous_model_id",
+    "previous_version",
+    "previous_artifact_path",
+    "previous_regime",
+    "new_model_type",
+    "new_model_id",
+    "new_version",
+    "new_artifact_path",
+    "new_regime",
+]
 
 
 class RegistryError(RuntimeError):
@@ -31,6 +50,33 @@ class ActiveModelRef:
 
 def _now_iso_z() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _ref_identity(ref: ActiveModelRef | None) -> tuple[str | None, ...]:
+    if ref is None:
+        return (None, None, None, None, None, None)
+    return (
+        ref.model_type,
+        ref.model_id,
+        ref.version,
+        ref.artifact_path.as_posix(),
+        ref.regime,
+        ref.metadata_path.as_posix() if ref.metadata_path is not None else None,
+    )
+
+
+def append_registry_history(history_file: Path, event: dict[str, Any]) -> None:
+    history_file.parent.mkdir(parents=True, exist_ok=True)
+    row = {column: event.get(column) for column in REGISTRY_HISTORY_COLUMNS}
+    df_new = pd.DataFrame([row], columns=REGISTRY_HISTORY_COLUMNS)
+
+    if history_file.exists():
+        df_existing = pd.read_parquet(history_file).reindex(columns=REGISTRY_HISTORY_COLUMNS)
+        df = pd.concat([df_existing, df_new], ignore_index=True)
+    else:
+        df = df_new
+
+    df.to_parquet(history_file, index=False)
 
 
 def _validate_active_payload(payload: dict[str, Any]) -> ActiveModelRef:
@@ -92,10 +138,23 @@ def read_active(active_file: Path = ACTIVE_FILE) -> ActiveModelRef:
     return _validate_active_payload(payload)
 
 
-def write_active(ref: ActiveModelRef, active_file: Path = ACTIVE_FILE) -> None:
+def write_active(
+    ref: ActiveModelRef,
+    active_file: Path = ACTIVE_FILE,
+    *,
+    history_file: Path | None = None,
+    event_context: dict[str, Any] | None = None,
+) -> bool:
     """
     Write registry/active_model.yaml from an ActiveModelRef.
     """
+    previous_ref: ActiveModelRef | None = None
+    if active_file.exists():
+        try:
+            previous_ref = read_active(active_file=active_file)
+        except RegistryError:
+            previous_ref = None
+
     active_file.parent.mkdir(parents=True, exist_ok=True)
 
     payload: dict[str, Any] = {
@@ -118,6 +177,35 @@ def write_active(ref: ActiveModelRef, active_file: Path = ACTIVE_FILE) -> None:
 
     with active_file.open("w", encoding="utf-8") as f:
         yaml.safe_dump(payload, f, sort_keys=False)
+
+    pointer_changed = _ref_identity(previous_ref) != _ref_identity(ref)
+    if pointer_changed:
+        target_history = history_file or active_file.parent / "history.parquet"
+        context = event_context or {}
+        append_registry_history(
+            target_history,
+            {
+                "ts": context.get("ts") or _now_iso_z(),
+                "event_type": context.get("event_type") or "pointer_update",
+                "source": context.get("source") or "registry.write_active",
+                "run_ts": context.get("run_ts"),
+                "reason": context.get("reason"),
+                "previous_model_type": previous_ref.model_type if previous_ref is not None else None,
+                "previous_model_id": previous_ref.model_id if previous_ref is not None else None,
+                "previous_version": previous_ref.version if previous_ref is not None else None,
+                "previous_artifact_path": (
+                    previous_ref.artifact_path.as_posix() if previous_ref is not None else None
+                ),
+                "previous_regime": previous_ref.regime if previous_ref is not None else None,
+                "new_model_type": ref.model_type,
+                "new_model_id": ref.model_id,
+                "new_version": ref.version,
+                "new_artifact_path": ref.artifact_path.as_posix(),
+                "new_regime": ref.regime,
+            },
+        )
+
+    return pointer_changed
 
 
 def load_active_model(

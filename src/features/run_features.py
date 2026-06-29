@@ -94,13 +94,15 @@ def run(
     input_path: Path,
     timestamp: str,
     config_path: Path = Path("src/config/settings.yaml"),
+    output_stem: str | None = None,
+    write_latest: bool = True,
 ) -> tuple[Path, Path]:
     """
     Programmatic entrypoint for orchestration (PR 9).
 
     Writes:
-      - <features_dir>/<timestamp>.parquet
-      - <features_dir>/<timestamp>.manifest.json
+      - <features_dir>/<output_stem or timestamp>.parquet
+      - <features_dir>/<output_stem or timestamp>.manifest.json
 
     Returns:
       (parquet_path, manifest_path)
@@ -127,7 +129,8 @@ def run(
         if {s1, s2}.issubset(present):
             feats = _to_xy_wide(feats, symbols=(s1, s2))
 
-    parquet_path = features_dir / f"{timestamp}.parquet"
+    stem = output_stem or timestamp
+    parquet_path = features_dir / f"{stem}.parquet"
     feats.to_parquet(parquet_path, index=False)
 
     manifest = FeatureManifest(
@@ -138,14 +141,15 @@ def run(
         content_sha256=dataframe_sha256(feats),
     )
 
-    manifest_path = features_dir / f"{timestamp}.manifest.json"
+    manifest_path = features_dir / f"{stem}.manifest.json"
     write_manifest(manifest, manifest_path)
 
-    latest_parquet = features_dir / "latest.parquet"
-    feats.to_parquet(latest_parquet, index=False)
+    if write_latest:
+        latest_parquet = features_dir / "latest.parquet"
+        feats.to_parquet(latest_parquet, index=False)
 
-    latest_manifest = features_dir / "latest.manifest.json"
-    write_manifest(manifest, latest_manifest)
+        latest_manifest = features_dir / "latest.manifest.json"
+        write_manifest(manifest, latest_manifest)
 
     print(f"Wrote: {parquet_path}")
     print(f"Wrote: {manifest_path}")

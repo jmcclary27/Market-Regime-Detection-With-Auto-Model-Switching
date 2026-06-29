@@ -1,14 +1,11 @@
 # src/ingestion/run_ingestion.py
-from src.config.load_config import load_config
-from src.ingestion.fetch_market_data import fetch_market_data
+from __future__ import annotations
+
+from src.jobs.poll_market_data import main as poll_market_data_main
 
 
 def main() -> None:
-    cfg = load_config()
-    symbols = cfg["market"]["symbols"]
-
-    for sym in symbols:
-        fetch_market_data(sym, "2020-01-01", "2020-12-31")
+    poll_market_data_main([])
 
 
 def run() -> None:

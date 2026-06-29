@@ -1,51 +1,20 @@
 # Future Metrics Roadmap
 
-This document tracks what the project can already measure and what additional
-platform or modeling capabilities would unlock stronger MLOps and DevOps
-statistics later.
+Phase 1 is now focused on capabilities we can measure from real saved artifacts
+in this repo. The table below is the source of truth for what is implemented,
+what is partially unlocked, and what still needs more platform work.
 
-## Available Now
-
-The historical metrics collector already summarizes:
-
-- Lineage-backed run history and subject-run drilldowns
-- Git commit and config hash presence rates
-- Scorecard MAE and RMSE, including active-versus-baseline deltas
-- Per-regime evaluation winners and regime coverage counts
-- Walk-forward portfolio metrics such as Sharpe, CAGR, Sortino, max drawdown,
-  turnover, and profit factor
-- Promotion decisions, challenger/incumbent comparisons, and promotion-guard
-  outcomes
-- Regime diagnostics such as entropy, duration, switch frequency, occupancy, and
-  confidence quantiles
-- Live-sim portfolio growth, drawdown, trade counts, and model or regime
-  coverage
-- Engineering inventory signals such as saved scorecards, saved lineage files,
-  test file count, and test case count
-
-## Future Capability -> Unlocked Stats
-
-| Missing Capability | Unlocked Stats | Required Artifact or Source |
-| --- | --- | --- |
-| Data quality audit stage | Missing-bar rate, duplicate-bar rate, stale-bar p95, late-data rate, provider failure rate | Timestamped data quality report per ingestion run |
-| Replay or reproducibility audit stage | Exact replay pass rate, semantic replay pass rate, max prediction drift on replay, replay failure breakdown | Replay summary JSON or parquet keyed by `run_ts` |
-| Feature and prediction drift monitor | PSI or KL drift by feature, prediction drift by model, regime-distribution drift, alert lead time | Drift snapshots per run or per day |
-| Deployment event history with explicit rollback records | Promotion precision, rollback rate, rollback latency, challenger survival time, canary completion rate | Deployment events table with decision timestamps and rollback markers |
-| Richer live or paper execution engine | Average holding time, exposure %, realized versus unrealized PnL, slippage cost, fee impact, benchmark-relative return | Trade ledger with fills, positions, costs, and benchmark series |
-| Infrastructure and orchestration telemetry | Pipeline success rate, p50 or p95 runtime, per-step failure rate, mean recovery time, on-call style SLO compliance | Structured pipeline run log or metrics export |
-| Resource usage collection | CPU peak, memory peak, storage growth, model artifact size growth, runtime cost proxies | Per-run resource metrics snapshot |
-| Explicit cost accounting | Cost per retrain, cost per evaluation sweep, cost per 100 live-sim loops, monthly storage cost trend | Cost report or pricing snapshot joined to resource usage |
-| Alerting and monitoring history | Alert volume, false-positive rate, time-to-detect degradation, time-to-acknowledge, noisy-rule count | Alert event log with rule ids and timestamps |
-| Model calibration or classification outputs | Directional accuracy, calibration error, precision or recall, confusion by regime | Extended predictions artifact with class labels or calibrated probabilities |
-| Registry change log | Active model tenure, switch frequency over time, registry churn rate, rollback-after-promotion rate | Versioned registry history or pointer event stream |
-| Manual review or approval workflow | Human override rate, approval lead time, reason-code distribution, blocked-promotion rate | Review audit log keyed by candidate and run |
-
-## Recommended Order
-
-The highest-value additions for recruiter-facing evidence are:
-
-1. Replay or reproducibility audits
-2. Deployment event history with rollback metrics
-3. Data quality SLAs
-4. Infrastructure runtime and failure SLOs
-5. Richer execution realism and cost accounting
+| Capability | Status | Unlocked Stats Now | Remaining Work |
+| --- | --- | --- | --- |
+| Replay audits | Implemented | Exact replay pass rate, semantic replay pass rate, max prediction drift, replay failure breakdown, replay audit coverage by `run_ts` | Backfill more historical runs when legacy lineage points at mutable raw inputs; add scheduled replay cadence if we want continuous checks |
+| Deployment event history | Implemented | Promotion counts, hold or blocked counts, promotion precision inputs, rollback-rate inputs, canary-completion inputs, per-source decision history | Add richer rollback markers from live or paper execution so rollback latency can be measured from production-like reversions instead of model-pointer changes alone |
+| Data quality audit | Implemented | Missing-bar rate, duplicate-bar rate, stale-bar p95, late-data rate, provider failure count and rate, audit status counts | Extend the same contract to more feeds or providers if we broaden ingestion beyond the current poll paths |
+| Infrastructure telemetry | Implemented | Pipeline success rate, pipeline runtime p50 or p95, per-step failure rate, step duration history, mean recovery time between failed and recovered runs | Extend beyond the local pipeline runner into any external scheduler or service orchestration layer we add later |
+| Registry change log | Implemented | Active-model tenure, switch frequency, pointer churn, registry change count, deployment-to-pointer-write linkage | Add manual override and approval events into the same stream when a human review workflow exists |
+| Richer live or paper execution | Partial | Current live-sim history already supports equity growth, drawdown, trade counts, regime or model coverage, and roadmap linkage to deployment history | Add fills, positions, exposure, realized versus unrealized PnL, slippage, fees, and benchmark-relative return so execution-quality metrics become first-class |
+| Drift monitoring | Planned | None yet | Save feature drift, prediction drift, and regime-distribution drift snapshots on a recurring schedule |
+| Resource usage collection | Planned | None yet | Capture CPU, memory, storage, and artifact-size snapshots per run |
+| Explicit cost accounting | Planned | None yet | Join resource usage with pricing assumptions to estimate retrain, evaluation, live-loop, and storage cost trends |
+| Alerting history | Planned | None yet | Persist alert events, rule ids, timestamps, and acknowledgement data so detection and noise metrics can be measured |
+| Calibration or classification outputs | Planned | None yet | Extend prediction artifacts with calibrated probabilities or class labels so accuracy, precision or recall, and calibration metrics can be reported |
+| Manual review workflow | Planned | None yet | Add human approval, override, and reason-code logs keyed to promotion candidates and deployment decisions |

@@ -1,0 +1,31 @@
+{
+  "duplicate_bar_count": 0,
+  "duplicate_bar_rate": 0.0,
+  "expected_bar_count": 8600,
+  "finished_at_utc": "2026-06-29T21:31:28.644794+00:00",
+  "interval": "1d",
+  "late_data_count": 2,
+  "late_data_rate": 1.0,
+  "latest_staleness_seconds_by_symbol": {
+    "QQQ": 336688.644794,
+    "SPY": 336688.644794
+  },
+  "latest_timestamp_utc": "2026-06-26T00:00:00+00:00",
+  "missing_bar_count": 310,
+  "missing_bar_rate": 0.03604651162790698,
+  "provider_attempt_count": 2,
+  "provider_failure_count": 0,
+  "provider_failure_rate": 0.0,
+  "raw_path": "data\\raw\\SPY-QQQ_2010-01-01_2026-06-29_2026-06-29T21-31-28Z.csv",
+  "row_count": 8290,
+  "run_ts": "2026-06-29T21-31-28Z",
+  "run_type": "poll_market_data",
+  "stale_bar_p95_seconds": 336688.644794,
+  "started_timestamp_utc": "2010-01-04T00:00:00+00:00",
+  "status": "warning",
+  "symbols": [
+    "SPY",
+    "QQQ"
+  ],
+  "unique_bar_count": 8290
+}

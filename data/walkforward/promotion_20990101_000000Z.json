@@ -1,16 +1,44 @@
 {
   "available_models": [
+    "active",
     "baseline",
-    "expert_arima_bearish",
-    "expert_arima_bullish",
-    "expert_arima_sideways",
-    "expert_bearish",
-    "expert_bullish",
     "expert_bullish_ridge_v0",
-    "expert_sideways"
+    "expert_lightgbm_bearish",
+    "expert_lightgbm_bullish",
+    "expert_lightgbm_sideways"
   ],
-  "challenger_model_name": "expert_bearish",
-  "challenger_ref": {
+  "challenger_model_name": "expert_lightgbm_bearish",
+  "config_sha256": "6f41ab03231ad1466a2ed594ddf6947b3400095f43410040c954d982fdfc0a31",
+  "decision": {
+    "challenger": {
+      "max_drawdown": -5.433171145796667e-05,
+      "n_folds": NaN,
+      "sharpe": 1.7685154633793636
+    },
+    "deltas": {
+      "max_drawdown": 0.303584702579469,
+      "sharpe": 0.5506838888720988
+    },
+    "incumbent": {
+      "max_drawdown": -0.303639034290927,
+      "n_folds": NaN,
+      "sharpe": 1.2178315745072648
+    },
+    "promote": false,
+    "reason": "expert candidate metadata missing feature_range_stats: models\\experts\\bearish\\latest.json"
+  },
+  "git_commit": "faa9a07071c80056521f4d61b647fa51f5cdbdaf",
+  "incumbent_model_name": "baseline",
+  "inputs": {
+    "lineage": "artifacts\\lineage\\latest.json",
+    "predictions_latest": "data\\predictions\\latest.parquet",
+    "walkforward_metrics": "data\\walkforward\\portfolio_metrics_20990101_000000Z.parquet"
+  },
+  "non_promotable_models": [
+    "active",
+    "expert_arima_*"
+  ],
+  "passed_challenger_ref": {
     "artifact_path": "models/pretrained/elasticnet/latest.joblib",
     "metadata_path": null,
     "model_id": "elasticnet_v0",
@@ -18,33 +46,15 @@
     "regime": null,
     "version": "0"
   },
-  "config_sha256": "074057ba2ad5e98cc2bf23f612f2b78bf85908f30e2393bae764690d0013a0c2",
-  "decision": {
-    "challenger": {
-      "max_drawdown": -5.4331711457744625e-05,
-      "n_folds": NaN,
-      "sharpe": 1.7095992513735918
-    },
-    "deltas": {
-      "max_drawdown": 0.2840019592060469,
-      "sharpe": 0.324635493981108
-    },
-    "incumbent": {
-      "max_drawdown": -0.2840562909175046,
-      "n_folds": NaN,
-      "sharpe": 1.3849637573924838
-    },
-    "promote": true,
-    "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail"
-  },
-  "git_commit": "4654179865ded106b9689194fa24ee38b014c580",
-  "incumbent_model_name": "baseline",
-  "inputs": {
-    "lineage": "artifacts\\lineage\\latest.json",
-    "walkforward_metrics": "data\\walkforward\\portfolio_metrics_20990101_000000Z.parquet"
-  },
-  "pointer_written": true,
-  "promoted": true,
+  "pointer_written": false,
+  "promotable_models": [
+    "baseline",
+    "expert_bullish_ridge_v0",
+    "expert_lightgbm_bearish",
+    "expert_lightgbm_bullish",
+    "expert_lightgbm_sideways"
+  ],
+  "promoted": false,
   "promotion_config": {
     "fold_col": "fold_id",
     "max_drawdown_threshold": 0.35,
@@ -55,6 +65,42 @@
     "sharpe_agg": "mean",
     "sharpe_col": "sharpe"
   },
-  "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail",
+  "promotion_guard": {
+    "allowed": false,
+    "candidate_model_name": "expert_lightgbm_bearish",
+    "current_features_path": null,
+    "feature_violations": [],
+    "metadata_path": "models/experts/bearish/latest.json",
+    "prediction_nunique": 15,
+    "prediction_std": 0.00010682052963595907,
+    "reason": "expert candidate metadata missing feature_range_stats: models\\experts\\bearish\\latest.json"
+  },
+  "raw_decision": {
+    "challenger": {
+      "max_drawdown": -5.433171145796667e-05,
+      "n_folds": NaN,
+      "sharpe": 1.7685154633793636
+    },
+    "deltas": {
+      "max_drawdown": 0.303584702579469,
+      "sharpe": 0.5506838888720988
+    },
+    "incumbent": {
+      "max_drawdown": -0.303639034290927,
+      "n_folds": NaN,
+      "sharpe": 1.2178315745072648
+    },
+    "promote": true,
+    "reason": "challenger beats incumbent on sharpe and satisfies max_drawdown guardrail"
+  },
+  "reason": "expert candidate metadata missing feature_range_stats: models\\experts\\bearish\\latest.json",
+  "resolved_challenger_ref": {
+    "artifact_path": "models/experts/bearish/latest.joblib",
+    "metadata_path": "models/experts/bearish/latest.json",
+    "model_id": "expert_lightgbm_bearish",
+    "model_type": "expert",
+    "regime": "bearish",
+    "version": "0"
+  },
   "run_ts": "20990101_000000Z"
 }

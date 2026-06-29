@@ -1,0 +1,56 @@
+{
+  "artifacts": {
+    "data_quality_audit_json": null,
+    "features_manifest": "data\\features\\replay_20990101_000000Z.manifest.json",
+    "features_parquet": "data\\features\\replay_20990101_000000Z.parquet",
+    "pipeline_run_json": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\artifacts\\pipeline_runs\\pipeline_run_replay_20990101_000000Z.json",
+    "predictions_parquet": "data\\predictions\\predictions_replay_20990101_000000Z.parquet",
+    "promotion_decision_json": null,
+    "raw_csv": "C:\\Users\\jaden\\Market-Regime-Detection-With-Auto-Model-Switching\\data\\raw\\SPY-QQQ_2010-01-01_2026-06-29_2026-06-29T21-36-27Z.csv",
+    "regimes_parquet": "data\\regimes\\replay_20990101_000000Z.parquet",
+    "walkforward_portfolio_metrics_parquet": null
+  },
+  "duration_seconds": 5.0,
+  "error": null,
+  "finished_at_utc": "2026-06-29T21:36:51Z",
+  "mode": "pipeline",
+  "replay": true,
+  "replay_ts": "20990101_000000Z",
+  "run_ts": "20990101_000000Z",
+  "started_at_utc": "2026-06-29T21:36:46Z",
+  "status": "completed",
+  "steps": [
+    {
+      "duration_seconds": 0.0,
+      "error": null,
+      "finished_at_utc": "2026-06-29T21:36:49Z",
+      "name": "features",
+      "started_at_utc": "2026-06-29T21:36:49Z",
+      "status": "completed"
+    },
+    {
+      "duration_seconds": 1.0,
+      "error": null,
+      "finished_at_utc": "2026-06-29T21:36:50Z",
+      "name": "regimes",
+      "started_at_utc": "2026-06-29T21:36:49Z",
+      "status": "completed"
+    },
+    {
+      "duration_seconds": 1.0,
+      "error": null,
+      "finished_at_utc": "2026-06-29T21:36:51Z",
+      "name": "predict",
+      "started_at_utc": "2026-06-29T21:36:50Z",
+      "status": "completed"
+    },
+    {
+      "duration_seconds": 0.0,
+      "error": null,
+      "finished_at_utc": "2026-06-29T21:36:51Z",
+      "name": "replay_verify",
+      "started_at_utc": "2026-06-29T21:36:51Z",
+      "status": "completed"
+    }
+  ]
+}

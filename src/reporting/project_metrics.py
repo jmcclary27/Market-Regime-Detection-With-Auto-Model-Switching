@@ -12,6 +12,7 @@ from typing import Any, cast
 import pandas as pd
 
 from src.data.lineage import sha256_file, try_git_commit
+from src.reporting.roadmap import parse_future_metrics_roadmap
 
 LINEAGE_ARTIFACT_KEYS = (
     "raw_csv",
@@ -19,6 +20,8 @@ LINEAGE_ARTIFACT_KEYS = (
     "features_parquet",
     "regimes_parquet",
     "predictions_parquet",
+    "data_quality_audit_json",
+    "pipeline_run_json",
     "walkforward_portfolio_metrics_parquet",
     "promotion_decision_json",
 )
@@ -34,6 +37,9 @@ BOOL_FIELDS = (
     "has_walkforward_portfolio_metrics_parquet",
     "has_promotion_json",
     "has_regime_diagnostics_json",
+    "has_data_quality_audit_json",
+    "has_pipeline_run_json",
+    "has_replay_audit_json",
 )
 
 
@@ -150,6 +156,19 @@ def _companion_paths(project_root: Path, run: HistoryRun) -> dict[str, Path | No
                 project_root / "data" / "walkforward" / f"promotion_{run_ts}.json",
             ]
         ),
+        "data_quality_audit_json": _first_defined_path(
+            [
+                lineage_paths.get("data_quality_audit_json"),
+                project_root / "artifacts" / "data_quality" / f"data_quality_{run_ts}.json",
+            ]
+        ),
+        "pipeline_run_json": _first_defined_path(
+            [
+                lineage_paths.get("pipeline_run_json"),
+                project_root / "artifacts" / "pipeline_runs" / f"pipeline_run_{run_ts}.json",
+            ]
+        ),
+        "replay_audit_json": project_root / "artifacts" / "replay" / f"replay_{run_ts}.json",
         "regime_diagnostics_json": project_root
         / "artifacts"
         / "regimes"
@@ -576,6 +595,212 @@ def _apply_regime_diagnostics(run_row: dict[str, Any], diagnostics: dict[str, An
             run_row[f"confidence_{field}"] = _finite_float(confidence.get(field))
 
 
+def _apply_data_quality_metrics(run_row: dict[str, Any], audit: dict[str, Any]) -> None:
+    run_row["data_quality_status"] = audit.get("status")
+    for field in (
+        "duplicate_bar_rate",
+        "missing_bar_rate",
+        "late_data_rate",
+        "provider_failure_rate",
+        "stale_bar_p95_seconds",
+    ):
+        run_row[field] = _finite_float(audit.get(field))
+    for field in (
+        "duplicate_bar_count",
+        "missing_bar_count",
+        "late_data_count",
+        "provider_failure_count",
+        "provider_attempt_count",
+        "row_count",
+    ):
+        run_row[field] = _finite_int(audit.get(field))
+    run_row["data_quality_interval"] = audit.get("interval")
+
+
+def _apply_pipeline_run_metrics(run_row: dict[str, Any], pipeline_run: dict[str, Any]) -> None:
+    run_row["pipeline_status"] = pipeline_run.get("status")
+    run_row["pipeline_duration_seconds"] = _finite_float(pipeline_run.get("duration_seconds"))
+    run_row["pipeline_started_at_utc"] = pipeline_run.get("started_at_utc")
+    run_row["pipeline_finished_at_utc"] = pipeline_run.get("finished_at_utc")
+
+    steps = pipeline_run.get("steps")
+    if not isinstance(steps, list):
+        return
+
+    run_row["pipeline_step_count"] = len(steps)
+    run_row["pipeline_failed_step_count"] = sum(
+        1 for step in steps if isinstance(step, dict) and step.get("status") == "failed"
+    )
+
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        name = str(step.get("name", "")).strip()
+        if not name:
+            continue
+        run_row[f"pipeline_step_{name}_status"] = step.get("status")
+        run_row[f"pipeline_step_{name}_duration_seconds"] = _finite_float(
+            step.get("duration_seconds")
+        )
+
+
+def _apply_replay_metrics(run_row: dict[str, Any], replay_audit: dict[str, Any]) -> None:
+    run_row["replay_status"] = replay_audit.get("status")
+    run_row["replay_exact_pass"] = replay_audit.get("exact_pass")
+    run_row["replay_semantic_pass"] = replay_audit.get("semantic_pass")
+    run_row["replay_max_prediction_drift"] = _finite_float(replay_audit.get("max_prediction_drift"))
+    failures = replay_audit.get("failure_breakdown")
+    if isinstance(failures, list):
+        run_row["replay_failure_count"] = len(failures)
+
+
+def _series_quantile(values: pd.Series, quantile: float) -> float | None:
+    series = pd.to_numeric(values, errors="coerce").dropna()
+    if series.empty:
+        return None
+    return _finite_float(series.quantile(quantile))
+
+
+def _replay_summary(runs_df: pd.DataFrame) -> dict[str, Any]:
+    if "has_replay_audit_json" not in runs_df.columns:
+        return {"audit_count": 0}
+    frame = runs_df[runs_df["has_replay_audit_json"].fillna(False).astype(bool)].copy()
+    if frame.empty:
+        return {"audit_count": 0}
+    out: dict[str, Any] = {"audit_count": int(len(frame))}
+    if "replay_exact_pass" in frame.columns:
+        out["exact_pass_rate"] = float(frame["replay_exact_pass"].fillna(False).astype(bool).mean())
+    if "replay_semantic_pass" in frame.columns:
+        out["semantic_pass_rate"] = float(
+            frame["replay_semantic_pass"].fillna(False).astype(bool).mean()
+        )
+    if "replay_max_prediction_drift" in frame.columns:
+        out["max_prediction_drift_worst"] = _finite_float(frame["replay_max_prediction_drift"].max())
+    return out
+
+
+def _data_quality_summary(runs_df: pd.DataFrame) -> dict[str, Any]:
+    if "has_data_quality_audit_json" not in runs_df.columns:
+        return {"audit_count": 0}
+    frame = runs_df[runs_df["has_data_quality_audit_json"].fillna(False).astype(bool)].copy()
+    if frame.empty:
+        return {"audit_count": 0}
+    out: dict[str, Any] = {"audit_count": int(len(frame))}
+    if "data_quality_status" in frame.columns:
+        out["ok_rate"] = float((frame["data_quality_status"] == "ok").mean())
+    for field in (
+        "duplicate_bar_rate",
+        "missing_bar_rate",
+        "late_data_rate",
+        "provider_failure_rate",
+        "stale_bar_p95_seconds",
+    ):
+        if field in frame.columns:
+            out[f"{field}_max"] = _finite_float(pd.to_numeric(frame[field], errors="coerce").max())
+    return out
+
+
+def _pipeline_summary(runs_df: pd.DataFrame) -> dict[str, Any]:
+    if "has_pipeline_run_json" not in runs_df.columns:
+        return {"run_count": 0}
+    frame = runs_df[runs_df["has_pipeline_run_json"].fillna(False).astype(bool)].copy()
+    if frame.empty:
+        return {"run_count": 0}
+    out: dict[str, Any] = {"run_count": int(len(frame))}
+    if "pipeline_status" in frame.columns:
+        out["success_rate"] = float((frame["pipeline_status"] == "completed").mean())
+    if "pipeline_duration_seconds" in frame.columns:
+        durations = pd.to_numeric(frame["pipeline_duration_seconds"], errors="coerce")
+        out["duration_p50_seconds"] = _series_quantile(durations, 0.50)
+        out["duration_p95_seconds"] = _series_quantile(durations, 0.95)
+
+    if {"pipeline_status", "pipeline_finished_at_utc"}.issubset(frame.columns):
+        ordered = frame.copy()
+        ordered["pipeline_finished_at_utc"] = pd.to_datetime(
+            ordered["pipeline_finished_at_utc"], utc=True, errors="coerce"
+        )
+        ordered = ordered.sort_values("pipeline_finished_at_utc", kind="mergesort")
+        recoveries: list[float] = []
+        pending_failure: pd.Timestamp | None = None
+        for _, row in ordered.iterrows():
+            finished_at = row.get("pipeline_finished_at_utc")
+            if pd.isna(finished_at):
+                continue
+            status = row.get("pipeline_status")
+            if status == "failed":
+                pending_failure = cast(pd.Timestamp, finished_at)
+            elif status == "completed" and pending_failure is not None:
+                recoveries.append(max((cast(pd.Timestamp, finished_at) - pending_failure).total_seconds(), 0.0))
+                pending_failure = None
+        if recoveries:
+            out["mean_recovery_time_seconds"] = float(sum(recoveries) / len(recoveries))
+    return out
+
+
+def _deployment_and_registry_summary(
+    project_root: Path,
+) -> tuple[dict[str, Any] | None, set[Path], str | None]:
+    events_path = project_root / "data" / "deployments" / "events.parquet"
+    history_path = project_root / "registry" / "history.parquet"
+    consumed: set[Path] = set()
+    out: dict[str, Any] = {}
+
+    events_df, events_error = _maybe_read_parquet(events_path)
+    if events_df is not None:
+        consumed.add(events_path)
+        out["event_count"] = int(len(events_df))
+        if "decision" in events_df.columns:
+            decisions = events_df["decision"].fillna("unknown").astype(str).value_counts()
+            out["promote_count"] = int(decisions.get("promote", 0))
+            out["rollback_count"] = int(decisions.get("rollback", 0))
+            out["hold_count"] = int(decisions.get("hold", 0))
+            out["blocked_count"] = int(decisions.get("blocked", 0))
+            completed = sum(int(decisions.get(name, 0)) for name in ("promote", "rollback", "hold", "blocked"))
+            out["canary_completion_rate"] = completed / float(max(len(events_df), 1))
+            out["promotion_precision"] = int(decisions.get("promote", 0)) / float(
+                max(int(decisions.get("promote", 0)) + int(decisions.get("rollback", 0)), 1)
+            )
+        if "pointer_written" in events_df.columns:
+            out["pointer_written_rate"] = float(
+                events_df["pointer_written"].fillna(False).astype(bool).mean()
+            )
+    elif events_error is not None:
+        return None, consumed, events_error
+
+    history_df, history_error = _maybe_read_parquet(history_path)
+    if history_df is not None:
+        consumed.add(history_path)
+        out["registry_change_count"] = int(len(history_df))
+        if "ts" in history_df.columns and not history_df.empty:
+            hist = history_df.copy()
+            hist["ts"] = pd.to_datetime(hist["ts"], utc=True, errors="coerce")
+            hist = hist.sort_values("ts", kind="mergesort")
+            tenures: list[float] = []
+            for idx in range(1, len(hist)):
+                prev_ts = hist.iloc[idx - 1]["ts"]
+                cur_ts = hist.iloc[idx]["ts"]
+                if pd.isna(prev_ts) or pd.isna(cur_ts):
+                    continue
+                tenures.append(max((cur_ts - prev_ts).total_seconds(), 0.0))
+            if tenures:
+                out["active_model_tenure_mean_seconds"] = float(sum(tenures) / len(tenures))
+            if len(hist) > 1:
+                first_ts = hist.iloc[0]["ts"]
+                last_ts = hist.iloc[-1]["ts"]
+                if not pd.isna(first_ts) and not pd.isna(last_ts):
+                    window_seconds = max((last_ts - first_ts).total_seconds(), 0.0)
+                    if window_seconds > 0.0:
+                        out["registry_churn_rate_per_day"] = (len(hist) - 1) / (
+                            window_seconds / 86400.0
+                        )
+    elif history_error is not None:
+        return None, consumed, history_error
+
+    if not out:
+        return None, consumed, None
+    return out, consumed, None
+
+
 def _test_inventory(project_root: Path) -> tuple[dict[str, Any], set[Path]]:
     tests_dir = project_root / "tests"
     test_files = sorted(tests_dir.glob("test_*.py"))
@@ -595,6 +820,15 @@ def _test_inventory(project_root: Path) -> tuple[dict[str, Any], set[Path]]:
             ),
             "saved_lineage_count": len(
                 list((project_root / "artifacts" / "lineage").glob("lineage_*.json"))
+            ),
+            "saved_replay_audit_count": len(
+                list((project_root / "artifacts" / "replay").glob("replay_*.json"))
+            ),
+            "saved_data_quality_audit_count": len(
+                list((project_root / "artifacts" / "data_quality").glob("data_quality_*.json"))
+            ),
+            "saved_pipeline_run_count": len(
+                list((project_root / "artifacts" / "pipeline_runs").glob("pipeline_run_*.json"))
             ),
         },
         consumed,
@@ -726,6 +960,11 @@ def _markdown_summary(
     subject_models: list[dict[str, Any]],
     live_sim: dict[str, Any] | None,
     inventory: dict[str, Any],
+    replay_summary: dict[str, Any],
+    deployments_summary: dict[str, Any] | None,
+    data_quality_summary: dict[str, Any],
+    pipeline_summary: dict[str, Any],
+    roadmap_summary: dict[str, Any],
     roadmap_path_display: str,
 ) -> str:
     top_models = subject_models[:5]
@@ -812,6 +1051,67 @@ def _markdown_summary(
             f"| Saved lineage count | {_format_int(inventory.get('saved_lineage_count'))} |",
             f"| Test file count | {_format_int(inventory.get('test_file_count'))} |",
             f"| Test case count | {_format_int(inventory.get('test_case_count'))} |",
+            f"| Replay audits saved | {_format_int(inventory.get('saved_replay_audit_count'))} |",
+            f"| Data-quality audits saved | {_format_int(inventory.get('saved_data_quality_audit_count'))} |",
+            f"| Pipeline summaries saved | {_format_int(inventory.get('saved_pipeline_run_count'))} |",
+            "",
+        ]
+    )
+    lines.extend(
+        [
+            "## Replay",
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Replay audit count | {_format_int(replay_summary.get('audit_count'))} |",
+            f"| Exact replay pass rate | {_format_number(replay_summary.get('exact_pass_rate'))} |",
+            f"| Semantic replay pass rate | {_format_number(replay_summary.get('semantic_pass_rate'))} |",
+            f"| Worst max prediction drift | {_format_number(replay_summary.get('max_prediction_drift_worst'))} |",
+            "",
+            "## Data Quality",
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Data-quality audit count | {_format_int(data_quality_summary.get('audit_count'))} |",
+            f"| Data-quality ok rate | {_format_number(data_quality_summary.get('ok_rate'))} |",
+            f"| Max missing-bar rate | {_format_number(data_quality_summary.get('missing_bar_rate_max'))} |",
+            f"| Max duplicate-bar rate | {_format_number(data_quality_summary.get('duplicate_bar_rate_max'))} |",
+            f"| Max late-data rate | {_format_number(data_quality_summary.get('late_data_rate_max'))} |",
+            "",
+            "## Pipeline Telemetry",
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Pipeline summaries | {_format_int(pipeline_summary.get('run_count'))} |",
+            f"| Pipeline success rate | {_format_number(pipeline_summary.get('success_rate'))} |",
+            f"| Runtime p50 seconds | {_format_number(pipeline_summary.get('duration_p50_seconds'))} |",
+            f"| Runtime p95 seconds | {_format_number(pipeline_summary.get('duration_p95_seconds'))} |",
+            f"| Mean recovery time seconds | {_format_number(pipeline_summary.get('mean_recovery_time_seconds'))} |",
+            "",
+        ]
+    )
+
+    if deployments_summary is not None:
+        lines.extend(
+            [
+                "## Deployments",
+                "| Metric | Value |",
+                "| --- | --- |",
+                f"| Deployment events | {_format_int(deployments_summary.get('event_count'))} |",
+                f"| Promote count | {_format_int(deployments_summary.get('promote_count'))} |",
+                f"| Rollback count | {_format_int(deployments_summary.get('rollback_count'))} |",
+                f"| Canary completion rate | {_format_number(deployments_summary.get('canary_completion_rate'))} |",
+                f"| Registry change count | {_format_int(deployments_summary.get('registry_change_count'))} |",
+                "",
+            ]
+        )
+
+    lines.extend(
+        [
+            "## Roadmap Coverage",
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Implemented capabilities | {_format_int(roadmap_summary.get('implemented_count'))} |",
+            f"| Partial capabilities | {_format_int(roadmap_summary.get('partial_count'))} |",
+            f"| Planned capabilities | {_format_int(roadmap_summary.get('planned_count'))} |",
+            f"| Remaining capabilities | {_format_int(len(cast(list[Any], roadmap_summary.get('remaining_capabilities', []))))} |",
             "",
         ]
     )
@@ -1003,6 +1303,32 @@ def generate_project_metrics_report(
         elif promotion_error is not None:
             run_row["promotion_json_error"] = promotion_error
 
+        data_quality_json, data_quality_error = _maybe_read_json(
+            companions.get("data_quality_audit_json")
+        )
+        if (
+            data_quality_json is not None
+            and companions.get("data_quality_audit_json") is not None
+        ):
+            consumed_paths.add(cast(Path, companions["data_quality_audit_json"]))
+            _apply_data_quality_metrics(run_row, data_quality_json)
+        elif data_quality_error is not None:
+            run_row["data_quality_audit_error"] = data_quality_error
+
+        pipeline_run_json, pipeline_run_error = _maybe_read_json(companions.get("pipeline_run_json"))
+        if pipeline_run_json is not None and companions.get("pipeline_run_json") is not None:
+            consumed_paths.add(cast(Path, companions["pipeline_run_json"]))
+            _apply_pipeline_run_metrics(run_row, pipeline_run_json)
+        elif pipeline_run_error is not None:
+            run_row["pipeline_run_error"] = pipeline_run_error
+
+        replay_audit_json, replay_audit_error = _maybe_read_json(companions.get("replay_audit_json"))
+        if replay_audit_json is not None and companions.get("replay_audit_json") is not None:
+            consumed_paths.add(cast(Path, companions["replay_audit_json"]))
+            _apply_replay_metrics(run_row, replay_audit_json)
+        elif replay_audit_error is not None:
+            run_row["replay_audit_error"] = replay_audit_error
+
         diagnostics_json, diagnostics_error = _maybe_read_json(
             companions.get("regime_diagnostics_json")
         )
@@ -1075,6 +1401,8 @@ def generate_project_metrics_report(
 
     live_sim, live_sim_paths, live_sim_error = _live_sim_summary(root)
     consumed_paths.update(live_sim_paths)
+    deployments_summary, deployment_paths, deployments_error = _deployment_and_registry_summary(root)
+    consumed_paths.update(deployment_paths)
 
     if roadmap.exists():
         consumed_paths.add(roadmap)
@@ -1082,6 +1410,13 @@ def generate_project_metrics_report(
     history_summary = _history_summary(runs_df, inventory)
     if live_sim_error is not None:
         history_summary["live_sim_error"] = live_sim_error
+    if deployments_error is not None:
+        history_summary["deployments_error"] = deployments_error
+
+    replay_summary = _replay_summary(runs_df)
+    data_quality_summary = _data_quality_summary(runs_df)
+    pipeline_summary = _pipeline_summary(runs_df)
+    roadmap_summary = parse_future_metrics_roadmap(roadmap)
 
     roadmap_display = (
         roadmap.relative_to(root).as_posix() if roadmap.is_relative_to(root) else roadmap.as_posix()
@@ -1121,11 +1456,12 @@ def generate_project_metrics_report(
             },
         },
         "live_sim": live_sim,
+        "replay": replay_summary,
+        "deployments": deployments_summary,
+        "data_quality": data_quality_summary,
+        "pipeline": pipeline_summary,
         "inventory": inventory,
-        "roadmap": {
-            "path": roadmap_display,
-            "exists": roadmap.exists(),
-        },
+        "roadmap": {**roadmap_summary, "path": roadmap_display, "exists": roadmap.exists()},
     }
     report_json = cast(dict[str, Any], _sanitize_json(report_json))
 
@@ -1136,6 +1472,11 @@ def generate_project_metrics_report(
         subject_models=subject_models,
         live_sim=live_sim,
         inventory=inventory,
+        replay_summary=replay_summary,
+        deployments_summary=deployments_summary,
+        data_quality_summary=data_quality_summary,
+        pipeline_summary=pipeline_summary,
+        roadmap_summary=roadmap_summary,
         roadmap_path_display=roadmap_display,
     )
 

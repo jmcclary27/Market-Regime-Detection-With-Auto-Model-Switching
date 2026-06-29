@@ -223,11 +223,146 @@ def _write_regime_diagnostics(root: Path, *, run_ts: str) -> None:
     _write_json(root / "artifacts" / "regimes" / f"diagnostics_{run_ts}.json", payload)
 
 
-def _write_lineage(root: Path, *, run_ts: str, include_promotion_refs: bool = True) -> None:
+def _write_data_quality(root: Path, *, run_ts: str, status: str = "ok") -> None:
+    payload = {
+        "run_ts": run_ts,
+        "status": status,
+        "interval": "1d",
+        "row_count": 100,
+        "duplicate_bar_count": 0,
+        "duplicate_bar_rate": 0.0,
+        "missing_bar_count": 0,
+        "missing_bar_rate": 0.0,
+        "late_data_count": 0,
+        "late_data_rate": 0.0,
+        "provider_failure_count": 0,
+        "provider_failure_rate": 0.0,
+        "stale_bar_p95_seconds": 30.0,
+    }
+    _write_json(root / "artifacts" / "data_quality" / f"data_quality_{run_ts}.json", payload)
+
+
+def _write_pipeline_run(root: Path, *, run_ts: str, status: str = "completed") -> None:
+    payload = {
+        "run_ts": run_ts,
+        "mode": "pipeline",
+        "replay": False,
+        "status": status,
+        "started_at_utc": "2026-01-01T00:00:00+00:00",
+        "finished_at_utc": "2026-01-01T00:05:00+00:00",
+        "duration_seconds": 300.0,
+        "steps": [
+            {
+                "name": "poll",
+                "status": "completed",
+                "started_at_utc": "2026-01-01T00:00:00+00:00",
+                "finished_at_utc": "2026-01-01T00:01:00+00:00",
+                "duration_seconds": 60.0,
+                "error": None,
+            },
+            {
+                "name": "predict",
+                "status": "completed" if status == "completed" else "failed",
+                "started_at_utc": "2026-01-01T00:03:00+00:00",
+                "finished_at_utc": "2026-01-01T00:04:00+00:00",
+                "duration_seconds": 60.0,
+                "error": None if status == "completed" else "boom",
+            },
+        ],
+        "artifacts": {},
+        "error": None if status == "completed" else "RuntimeError('boom')",
+    }
+    _write_json(root / "artifacts" / "pipeline_runs" / f"pipeline_run_{run_ts}.json", payload)
+
+
+def _write_replay_audit(root: Path, *, run_ts: str, status: str = "passed") -> None:
+    payload = {
+        "run_ts": run_ts,
+        "status": status,
+        "exact_pass": status == "passed",
+        "semantic_pass": status == "passed",
+        "max_prediction_drift": 0.0 if status == "passed" else 0.02,
+        "checked_artifacts": [],
+        "failure_breakdown": [] if status == "passed" else [{"kind": "prediction_drift"}],
+    }
+    _write_json(root / "artifacts" / "replay" / f"replay_{run_ts}.json", payload)
+
+
+def _write_deployment_history(root: Path) -> None:
+    df = pd.DataFrame(
+        {
+            "ts": ["2026-01-01T00:10:00Z", "2026-01-02T00:10:00Z"],
+            "run_ts": ["20260101_000000Z", "20260102_000000Z"],
+            "source": ["run_promotion", "switcher"],
+            "event_type": ["promoted", "hold"],
+            "decision": ["promote", "hold"],
+            "active_model_id_before": ["baseline", "expert_lightgbm_bullish"],
+            "candidate_model_id": ["expert_lightgbm_bullish", "expert_lightgbm_bullish"],
+            "active_model_id_after": ["expert_lightgbm_bullish", "expert_lightgbm_bullish"],
+            "window_type": [None, "count"],
+            "window_value": [None, 50],
+            "n": [None, 100],
+            "metric_name": ["sharpe", "rmse"],
+            "active_metric_value": [0.9, 0.4],
+            "candidate_metric_value": [1.2, 0.3],
+            "metric_delta": [0.3, -0.1],
+            "active_max_drawdown": [-0.2, None],
+            "candidate_max_drawdown": [-0.1, None],
+            "promotion_guard_allowed": [True, None],
+            "pointer_written": [True, False],
+            "reason": ["promoted", "held"],
+        }
+    )
+    deployments_dir = root / "data" / "deployments"
+    deployments_dir.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(deployments_dir / "events.parquet", index=False)
+
+
+def _write_registry_history(root: Path) -> None:
+    df = pd.DataFrame(
+        {
+            "ts": ["2026-01-01T00:10:00Z", "2026-01-03T00:10:00Z"],
+            "event_type": ["pointer_update", "pointer_update"],
+            "source": ["run_promotion", "manual"],
+            "run_ts": ["20260101_000000Z", None],
+            "reason": ["promoted", "manual refresh"],
+            "previous_model_type": [None, "expert"],
+            "previous_model_id": [None, "expert_lightgbm_bullish"],
+            "previous_version": [None, "0"],
+            "previous_artifact_path": [None, "models/experts/bullish/latest.joblib"],
+            "previous_regime": [None, "bullish"],
+            "new_model_type": ["expert", "expert"],
+            "new_model_id": ["expert_lightgbm_bullish", "expert_lightgbm_sideways"],
+            "new_version": ["0", "0"],
+            "new_artifact_path": [
+                "models/experts/bullish/latest.joblib",
+                "models/experts/sideways/latest.joblib",
+            ],
+            "new_regime": ["bullish", "sideways"],
+        }
+    )
+    registry_dir = root / "registry"
+    registry_dir.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(registry_dir / "history.parquet", index=False)
+
+
+def _write_lineage(
+    root: Path,
+    *,
+    run_ts: str,
+    include_promotion_refs: bool = True,
+    include_data_quality_ref: bool = False,
+    include_pipeline_run_ref: bool = False,
+) -> None:
     lineage_dir = root / "artifacts" / "lineage"
     lineage_dir.mkdir(parents=True, exist_ok=True)
     artifacts: dict[str, dict[str, str]] = {
         "features_parquet": {"path": f"data/features/{run_ts}.parquet", "sha256": "features"},
+        "features_manifest": {
+            "path": f"data/features/{run_ts}.manifest.json",
+            "sha256": "manifest",
+        },
+        "regimes_parquet": {"path": f"data/regimes/{run_ts}.parquet", "sha256": "regimes"},
         "predictions_parquet": {
             "path": f"data/predictions/predictions_{run_ts}.parquet",
             "sha256": "preds",
@@ -242,6 +377,16 @@ def _write_lineage(root: Path, *, run_ts: str, include_promotion_refs: bool = Tr
         artifacts["promotion_decision_json"] = {
             "path": f"data/walkforward/promotion_{run_ts}.json",
             "sha256": "promotion",
+        }
+    if include_data_quality_ref:
+        artifacts["data_quality_audit_json"] = {
+            "path": f"artifacts/data_quality/data_quality_{run_ts}.json",
+            "sha256": "dq",
+        }
+    if include_pipeline_run_ref:
+        artifacts["pipeline_run_json"] = {
+            "path": f"artifacts/pipeline_runs/pipeline_run_{run_ts}.json",
+            "sha256": "pipeline",
         }
 
     payload = {
@@ -318,7 +463,21 @@ def _write_docs(root: Path) -> None:
     docs_dir = root / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
     (docs_dir / "future_metrics_roadmap.md").write_text(
-        "# Future Metrics Roadmap\n\nplaceholder\n",
+        "# Future Metrics Roadmap\n\n"
+        "| Capability | Status | Unlocked Stats Now | Remaining Work |\n"
+        "| --- | --- | --- | --- |\n"
+        "| Replay audits | Implemented | Exact replay pass rate, semantic replay pass rate, max prediction drift | Backfill more historical runs as artifacts grow |\n"
+        "| Deployment event history | Implemented | Promotion precision, rollback rate, canary completion rate | Add richer rollback survival attribution |\n"
+        "| Data quality audit | Implemented | Missing-bar rate, duplicate-bar rate, stale-bar p95, late-data rate | Add provider-specific rule thresholds |\n"
+        "| Infrastructure telemetry | Implemented | Pipeline success rate, p50/p95 runtime, per-step failure rate, mean recovery time | Add step-level alert thresholds |\n"
+        "| Registry change log | Implemented | Active model tenure and churn | Add richer manual override annotations |\n"
+        "| Richer live/paper execution | Partial | Trade counts plus portfolio growth and drawdown | Add holding time, exposure, fill-cost decomposition, benchmark-relative return |\n"
+        "| Drift monitoring | Planned | None yet | Persist feature, prediction, and regime drift snapshots |\n"
+        "| Resource usage collection | Planned | None yet | Capture CPU, memory, storage growth, and artifact-size trends |\n"
+        "| Explicit cost accounting | Planned | None yet | Join resource usage with cost models and storage pricing |\n"
+        "| Alerting history | Planned | None yet | Persist alert event logs and acknowledgement timings |\n"
+        "| Calibration or classification outputs | Planned | None yet | Extend predictions artifacts with class labels and calibrated probabilities |\n"
+        "| Manual review workflow | Planned | None yet | Add review audit logs and human override reason codes |\n",
         encoding="utf-8",
     )
 
@@ -327,6 +486,8 @@ def _build_history_fixture(root: Path) -> None:
     _write_docs(root)
     _write_test_inventory_files(root)
     _write_live_sim(root)
+    _write_deployment_history(root)
+    _write_registry_history(root)
 
     first_run = "20260101_000000Z"
     second_run = "20260102_000000Z"
@@ -334,12 +495,22 @@ def _build_history_fixture(root: Path) -> None:
     _write_lineage(root, run_ts=first_run, include_promotion_refs=False)
     _write_scorecard_artifacts(root, run_ts=first_run, active_rmse=0.30, baseline_rmse=0.55)
     _write_walkforward_artifacts(root, run_ts=first_run, active_sharpe=1.10, baseline_sharpe=0.80)
+    _write_pipeline_run(root, run_ts=first_run, status="failed")
 
-    _write_lineage(root, run_ts=second_run, include_promotion_refs=True)
+    _write_lineage(
+        root,
+        run_ts=second_run,
+        include_promotion_refs=True,
+        include_data_quality_ref=True,
+        include_pipeline_run_ref=True,
+    )
     _write_scorecard_artifacts(root, run_ts=second_run, active_rmse=0.22, baseline_rmse=0.50)
     _write_walkforward_artifacts(root, run_ts=second_run, active_sharpe=1.60, baseline_sharpe=0.95)
     _write_promotion(root, run_ts=second_run, promoted=True)
     _write_regime_diagnostics(root, run_ts=second_run)
+    _write_data_quality(root, run_ts=second_run, status="ok")
+    _write_pipeline_run(root, run_ts=second_run, status="completed")
+    _write_replay_audit(root, run_ts=second_run, status="passed")
 
     _write_latest_lineage(root, run_ts=second_run)
 
@@ -384,7 +555,13 @@ def test_generate_project_metrics_best_effort_history(tmp_path: Path) -> None:
     assert bool(first_row["has_regime_diagnostics_json"]) is False
     assert bool(second_row["has_promotion_json"]) is True
     assert bool(second_row["has_regime_diagnostics_json"]) is True
+    assert bool(second_row["has_data_quality_audit_json"]) is True
+    assert bool(second_row["has_pipeline_run_json"]) is True
+    assert bool(second_row["has_replay_audit_json"]) is True
     assert second_row["walkforward_active_vs_baseline_sharpe_delta"] > 0
+    assert second_row["pipeline_status"] == "completed"
+    assert second_row["data_quality_status"] == "ok"
+    assert bool(second_row["replay_exact_pass"]) is True
 
     active_second = models_df[
         (models_df["run_ts"] == "20260102_000000Z") & (models_df["model_name"] == "active")
@@ -396,15 +573,25 @@ def test_generate_project_metrics_best_effort_history(tmp_path: Path) -> None:
     assert latest_report["subject_run_ts"] == "20260102_000000Z"
     assert latest_report["history_summary"]["run_count"] == 2
     assert latest_report["history_summary"]["has_promotion_json_rate"] == 0.5
+    assert latest_report["history_summary"]["has_data_quality_audit_json_rate"] == 0.5
     assert latest_report["inventory"]["test_case_count"] == 3
+    assert latest_report["inventory"]["saved_replay_audit_count"] == 1
     assert latest_report["live_sim"]["trade_count"] == 2
+    assert latest_report["replay"]["exact_pass_rate"] == 1.0
+    assert latest_report["data_quality"]["ok_rate"] == 1.0
+    assert latest_report["pipeline"]["success_rate"] == 0.5
+    assert latest_report["deployments"]["event_count"] == 2
+    assert latest_report["roadmap"]["implemented_count"] == 5
     assert "20260102_000000Z" in latest_md
     assert "docs/future_metrics_roadmap.md" in latest_md
+    assert "Roadmap Coverage" in latest_md
+    assert "Replay" in latest_md
 
     assert manifest["subject_run_ts"] == "20260102_000000Z"
     assert manifest["history_run_ts"] == ["20260101_000000Z", "20260102_000000Z"]
     assert "latest_report.json" in manifest["output_hashes"]
     assert "docs/future_metrics_roadmap.md" in manifest["input_hashes"]
+    assert "data/deployments/events.parquet" in manifest["input_hashes"]
 
 
 def test_generate_project_metrics_is_deterministic(tmp_path: Path) -> None:

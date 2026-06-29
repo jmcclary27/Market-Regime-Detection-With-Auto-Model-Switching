@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+import os
 
 import pandas as pd
 
+from src.deploy.history import append_deployment_event
 from src.models.promotion_guard import evaluate_candidate_promotion_guard
 from src.registry.registry import ActiveModelRef, write_active
 
@@ -38,59 +40,16 @@ class SwitchConfig:
     update_registry_on_promote: bool = True
 
 
-# ---------- Event schema ----------
-
-EVENT_COLUMNS = [
-    "ts",
-    "event_type",
-    "active_model_id_before",
-    "candidate_model_id",
-    "active_model_id_after",
-    "window_type",
-    "window_value",
-    "n",
-    "metric_name",
-    "active_metric_value",
-    "candidate_metric_value",
-    "decision",
-    "reason",
-]
-
-# ---------- Helpers ----------
-
-
 def append_event(events_path: Path, event: dict[str, Any]) -> None:
-    """
-    Append a single event row to an append-only parquet log.
-    Avoid pandas concat dtype warnings by enforcing schema.
-    """
-    events_path.parent.mkdir(parents=True, exist_ok=True)
-
-    row = {col: event.get(col) for col in EVENT_COLUMNS}
-    df_new = pd.DataFrame([row], columns=EVENT_COLUMNS)
-
-    if not events_path.exists():
-        df_new.to_parquet(events_path, index=False)
-        return
-
-    df_existing = pd.read_parquet(events_path)
-
-    df_existing = df_existing.reindex(columns=EVENT_COLUMNS)
-    df_new = df_new.reindex(columns=EVENT_COLUMNS)
-
-    df = pd.concat([df_existing, df_new], ignore_index=True)
-
-    # Optional: keep n as a nullable integer column when possible
-    if "n" in df.columns:
-        try:
-            df["n"] = df["n"].astype("Int64")
-        except Exception:
-            pass
-
-    df.to_parquet(events_path, index=False)
+    append_deployment_event(events_path, event)
 
 
-def write_active_model_yaml(registry_path: Path, model_id: str) -> None:
+def write_active_model_yaml(
+    registry_path: Path,
+    model_id: str,
+    *,
+    event_context: dict[str, Any] | None = None,
+) -> bool:
     def _infer_regime(candidate_model_id: str) -> str | None:
         for regime in ("bullish", "bearish", "sideways"):
             if candidate_model_id == f"expert_{regime}" or candidate_model_id.endswith(f"_{regime}"):
@@ -138,7 +97,7 @@ def write_active_model_yaml(registry_path: Path, model_id: str) -> None:
             metadata_path=None,
         )
 
-    write_active(ref, active_file=registry_path)
+    return write_active(ref, active_file=registry_path, event_context=event_context)
 
 
 def infer_model_id_col(df: pd.DataFrame | None) -> str | None:
@@ -367,6 +326,7 @@ def run_switcher(
     """
     events_path = data_dir / "deployments" / "events.parquet"
     scorecards_dir = data_dir / "scorecards"
+    run_ts = os.getenv("RUN_TS") or None
 
     regimes_path = data_dir / "regimes" / "latest.parquet"
     latest_regime = load_latest_regime(regimes_path)
@@ -391,6 +351,8 @@ def run_switcher(
             events_path,
             {
                 "ts": datetime.now(UTC).isoformat(),
+                "run_ts": run_ts,
+                "source": "switcher",
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
                 "candidate_model_id": None,
@@ -402,6 +364,7 @@ def run_switcher(
                 "active_metric_value": None,
                 "candidate_metric_value": None,
                 "decision": "no_action",
+                "pointer_written": False,
                 "reason": f"no_candidate_for_regime={latest_regime}",
             },
         )
@@ -414,6 +377,8 @@ def run_switcher(
             events_path,
             {
                 "ts": datetime.now(UTC).isoformat(),
+                "run_ts": run_ts,
+                "source": "switcher",
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
                 "candidate_model_id": resolved_candidate_id,
@@ -425,6 +390,7 @@ def run_switcher(
                 "active_metric_value": None,
                 "candidate_metric_value": None,
                 "decision": "no_action",
+                "pointer_written": False,
                 "reason": "scorecard_missing",
             },
         )
@@ -436,6 +402,8 @@ def run_switcher(
             events_path,
             {
                 "ts": datetime.now(UTC).isoformat(),
+                "run_ts": run_ts,
+                "source": "switcher",
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
                 "candidate_model_id": resolved_candidate_id,
@@ -447,6 +415,7 @@ def run_switcher(
                 "active_metric_value": None,
                 "candidate_metric_value": None,
                 "decision": "no_action",
+                "pointer_written": False,
                 "reason": "scorecard_missing_model_id_column",
             },
         )
@@ -469,6 +438,8 @@ def run_switcher(
             events_path,
             {
                 "ts": datetime.now(UTC).isoformat(),
+                "run_ts": run_ts,
+                "source": "switcher",
                 "event_type": "canary_evaluated",
                 "active_model_id_before": active_model_id,
                 "candidate_model_id": resolved_candidate_id,
@@ -480,6 +451,7 @@ def run_switcher(
                 "active_metric_value": active_metric,
                 "candidate_metric_value": candidate_metric,
                 "decision": "no_action",
+                "pointer_written": False,
                 "reason": f"metrics_missing_for_model_id_or_metric regime={latest_regime}",
             },
         )
@@ -495,6 +467,7 @@ def run_switcher(
     active_after = active_model_id
     event_type = "canary_evaluated"
     decision_label = decision
+    pointer_written = False
 
     if decision == "promote":
         project_root = data_dir.parent
@@ -544,7 +517,16 @@ def run_switcher(
             event_type = "promoted"
             if config.update_registry_on_promote:
                 registry_path = project_root / "registry" / "active_model.yaml"
-                write_active_model_yaml(registry_path, resolved_candidate_id)
+                pointer_written = write_active_model_yaml(
+                    registry_path,
+                    resolved_candidate_id,
+                    event_context={
+                        "ts": datetime.now(UTC).replace(microsecond=0).isoformat(),
+                        "source": "switcher",
+                        "run_ts": run_ts,
+                        "reason": reason,
+                    },
+                )
         else:
             decision_label = "blocked"
             event_type = "blocked"
@@ -560,6 +542,8 @@ def run_switcher(
         events_path,
         {
             "ts": datetime.now(UTC).isoformat(),
+            "run_ts": run_ts,
+            "source": "switcher",
             "event_type": event_type,
             "active_model_id_before": active_model_id,
             "candidate_model_id": resolved_candidate_id,
@@ -570,6 +554,8 @@ def run_switcher(
             "metric_name": config.metric_name,
             "active_metric_value": active_metric,
             "candidate_metric_value": candidate_metric,
+            "promotion_guard_allowed": guard.allowed if decision == "promote" else None,
+            "pointer_written": pointer_written,
             "decision": decision_label,
             "reason": f"{reason} regime={latest_regime}",
         },

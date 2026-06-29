@@ -18,6 +18,7 @@ from src.config.load_config import load_config
 from src.features.run_features import run as run_features
 from src.inference.batch_predict import run_stage as run_predictions
 from src.ingestion.fetch_market_data import fetch_market_data
+from src.ingestion.quality import audit_raw_bars, default_audit_output
 from src.regimes.run_regime_detection import run as run_regimes
 from src.trading.execution import ExecutionConfig, execute_signal, log_trade
 from src.trading.signals import SignalConfig, prediction_to_signal
@@ -285,18 +286,23 @@ def poll_intraday_bars(cfg: LiveSimConfig, *, run_ts: str, now: datetime) -> Pat
     end_date = (now.date() + timedelta(days=1)).isoformat()
 
     frames: list[pd.DataFrame] = []
+    failures: list[str] = []
     for symbol in cfg.symbols:
-        df = fetch_market_data(
-            symbol,
-            start_date,
-            end_date,
-            interval=cfg.interval,
-            auto_adjust=False,
-        )
+        try:
+            df = fetch_market_data(
+                symbol,
+                start_date,
+                end_date,
+                interval=cfg.interval,
+                auto_adjust=False,
+            )
+        except Exception as exc:
+            failures.append(f"{symbol}: {exc}")
+            continue
         frames.append(_normalize_raw_frame(df, symbol))
 
     if not frames:
-        raise ValueError("No market data frames were fetched")
+        raise ValueError(f"No market data frames were fetched. failures={failures}")
 
     bars = pd.concat(frames, ignore_index=True)
     bars = bars.sort_values(["symbol", "timestamp"], kind="mergesort").reset_index(drop=True)
@@ -318,7 +324,22 @@ def poll_intraday_bars(cfg: LiveSimConfig, *, run_ts: str, now: datetime) -> Pat
         "latest_path": str(latest_path),
         "rows": int(len(bars)),
         "finished_at_utc": datetime.now(UTC).isoformat(),
+        "provider_failure_count": int(len(failures)),
+        "provider_attempt_count": int(len(cfg.symbols)),
     }
+    audit_path = default_audit_output(Path.cwd(), run_ts)
+    audit_raw_bars(
+        raw_path=output_path,
+        run_ts=run_ts,
+        finished_at_utc=str(run_record["finished_at_utc"]),
+        symbols=list(cfg.symbols),
+        interval=cfg.interval,
+        provider_failure_count=int(len(failures)),
+        provider_attempt_count=int(len(cfg.symbols)),
+        run_type="live_sim_intraday_poll",
+        output_path=audit_path,
+    )
+    run_record["data_quality_path"] = str(audit_path)
     atomic_write_json(cfg.paths.runs_dir / f"live_poll_{run_ts}.json", run_record)
     return output_path
 

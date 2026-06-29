@@ -28,6 +28,10 @@ class BatchPredictConfig:
     target_col: str = "target"
     active_file: Path | None = None
     inference_ts: int | None = None
+    output_name: str | None = None
+    latest_name: str | None = "latest.parquet"
+    run_meta_name: str | None = None
+    record_features_path: str | None = None
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
@@ -359,6 +363,7 @@ def run(config: BatchPredictConfig) -> Path:
     if not config.features_path.exists():
         raise FileNotFoundError(f"Features file not found: {config.features_path}")
 
+    recorded_features_path = config.record_features_path or str(config.features_path)
     df = pd.read_parquet(config.features_path)
 
     # Keep full DF around for ARIMA (needs a target series, not feature matrix)
@@ -469,7 +474,7 @@ def run(config: BatchPredictConfig) -> Path:
                             "model_source": active_model_source,
                             "y_pred": _safe_pred_value(pred),
                             "inference_ts": ts,
-                            "features_path": str(config.features_path),
+                            "features_path": recorded_features_path,
                             "model_path": active_artifact_path,
                             "is_active": True,
                             "active_model_type": active_model_type,
@@ -499,7 +504,7 @@ def run(config: BatchPredictConfig) -> Path:
                             "model_source": active_model_source,
                             "y_pred": _safe_pred_value(pred),
                             "inference_ts": ts,
-                            "features_path": str(config.features_path),
+                            "features_path": recorded_features_path,
                             "model_path": active_artifact_path,
                             "is_active": True,
                             "active_model_type": active_model_type,
@@ -549,15 +554,15 @@ def run(config: BatchPredictConfig) -> Path:
 
             for rid, pred in zip(row_ids_clean, preds, strict=False):
                 rows.append(
-                    {
-                        "row_id": int(rid),
-                        "model_name": spec["model_name"],
-                        "model_source": spec["model_source"],
-                        "y_pred": _safe_pred_value(pred),
-                        "inference_ts": ts,
-                        "features_path": str(config.features_path),
-                        "model_path": str(model_path),
-                        "is_active": False,
+                        {
+                            "row_id": int(rid),
+                            "model_name": spec["model_name"],
+                            "model_source": spec["model_source"],
+                            "y_pred": _safe_pred_value(pred),
+                            "inference_ts": ts,
+                            "features_path": recorded_features_path,
+                            "model_path": str(model_path),
+                            "is_active": False,
                         "active_model_type": active_model_type,
                         "active_model_id": active_model_id,
                         "active_model_version": active_model_version,
@@ -589,21 +594,24 @@ def run(config: BatchPredictConfig) -> Path:
     )
 
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = config.output_dir / f"predictions_{ts}.parquet"
+    output_name = config.output_name or f"predictions_{ts}.parquet"
+    output_path = config.output_dir / output_name
     out_df.to_parquet(output_path, index=False)
 
-    latest_path = config.output_dir / "latest.parquet"
-    shutil.copyfile(output_path, latest_path)
+    latest_path: Path | None = None
+    if config.latest_name:
+        latest_path = config.output_dir / str(config.latest_name)
+        shutil.copyfile(output_path, latest_path)
 
     config.runs_dir.mkdir(parents=True, exist_ok=True)
     run_meta: dict[str, Any] = {
         "rows_with_nan_or_inf": nan_rows,
         "run_type": "batch_inference",
         "timestamp": ts,
-        "features_path": str(config.features_path),
+        "features_path": recorded_features_path,
         "models_discovered": models,
         "output_path": str(output_path),
-        "latest_path": str(latest_path),
+        "latest_path": str(latest_path) if latest_path is not None else None,
         "num_prediction_rows": int(len(out_df)),
         "num_models_succeeded": int(
             out_df[["model_source", "model_name"]].drop_duplicates().shape[0]
@@ -622,7 +630,8 @@ def run(config: BatchPredictConfig) -> Path:
         },
     }
 
-    with open(config.runs_dir / f"run_{ts}.json", "w", encoding="utf-8") as f:
+    run_meta_name = config.run_meta_name or f"run_{ts}.json"
+    with open(config.runs_dir / run_meta_name, "w", encoding="utf-8") as f:
         json.dump(run_meta, f, indent=2)
 
     return output_path
@@ -637,6 +646,10 @@ def run_stage(
     output_dir: Path = Path("data/predictions"),
     runs_dir: Path = Path("data/runs"),
     inference_ts: int | None = None,
+    output_name: str | None = None,
+    latest_name: str | None = "latest.parquet",
+    run_meta_name: str | None = None,
+    record_features_path: str | None = None,
 ) -> Path:
     """
     Orchestration-friendly entrypoint.
@@ -649,6 +662,10 @@ def run_stage(
         target_col=target_col,
         active_file=active_file,
         inference_ts=inference_ts,
+        output_name=output_name,
+        latest_name=latest_name,
+        run_meta_name=run_meta_name,
+        record_features_path=record_features_path,
     )
     return run(cfg)
 

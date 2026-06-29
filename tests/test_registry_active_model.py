@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import joblib
+import pandas as pd
 import pytest
 
 from src.registry.registry import (
@@ -93,3 +94,37 @@ def test_load_active_model_loads_joblib(tmp_path: Path) -> None:
 def test_read_active_raises_on_missing_file(tmp_path: Path) -> None:
     with pytest.raises(RegistryError):
         read_active(active_file=tmp_path / "registry" / "active_model.yaml")
+
+
+def test_write_active_appends_history_only_when_pointer_changes(tmp_path: Path) -> None:
+    active_file = tmp_path / "registry" / "active_model.yaml"
+
+    first = ActiveModelRef(
+        model_type="baseline",
+        model_id="baseline",
+        version="0",
+        artifact_path=Path("models/baseline/latest.joblib"),
+        regime=None,
+        metadata_path=None,
+    )
+    second = ActiveModelRef(
+        model_type="expert",
+        model_id="expert_lightgbm_bullish",
+        version="0",
+        artifact_path=Path("models/experts/bullish/latest.joblib"),
+        regime="bullish",
+        metadata_path=Path("models/experts/bullish/latest.json"),
+    )
+
+    assert write_active(first, active_file=active_file) is True
+    assert write_active(first, active_file=active_file) is False
+    assert write_active(
+        second,
+        active_file=active_file,
+        event_context={"source": "test", "run_ts": "20260101_000000Z", "reason": "swap"},
+    ) is True
+
+    history = pd.read_parquet(tmp_path / "registry" / "history.parquet")
+    assert len(history) == 2
+    assert history.iloc[-1]["new_model_id"] == "expert_lightgbm_bullish"
+    assert history.iloc[-1]["source"] == "test"

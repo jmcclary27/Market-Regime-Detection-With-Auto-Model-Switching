@@ -15,6 +15,8 @@ def run(
     input_path: Path,
     timestamp: str,
     config_path: Path = Path("src/config/settings.yaml"),
+    output_stem: str | None = None,
+    write_latest: bool = True,
 ) -> Path:
     """
     Programmatic entrypoint for orchestration (PR 9).
@@ -23,7 +25,7 @@ def run(
       - features parquet at input_path
 
     Writes:
-      - <regimes_dir>/<timestamp>.parquet
+      - <regimes_dir>/<output_stem or timestamp>.parquet
 
     Output dataframe includes original features plus:
       - regime
@@ -56,11 +58,13 @@ def run(
 
     out = df.join(labels)
 
-    regimes_path = regimes_dir / f"{timestamp}.parquet"
+    stem = output_stem or timestamp
+    regimes_path = regimes_dir / f"{stem}.parquet"
     out.to_parquet(regimes_path, index=False)
 
-    latest_path = regimes_dir / "latest.parquet"
-    out.to_parquet(latest_path, index=False)
+    if write_latest:
+        latest_path = regimes_dir / "latest.parquet"
+        out.to_parquet(latest_path, index=False)
 
     print(f"Wrote: {regimes_path}")
     return regimes_path
