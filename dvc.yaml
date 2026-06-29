@@ -50,3 +50,18 @@ stages:
     deps:
       - src/deploy
       - data/scorecards/latest.parquet
+
+  report_metrics:
+    cmd: python tools/collect_project_metrics.py --subject-run-ts latest --history-source lineage --out-dir data/reporting --roadmap-path docs/future_metrics_roadmap.md
+    deps:
+      - tools/collect_project_metrics.py
+      - src/reporting
+      - artifacts/lineage
+      - data/scorecards
+      - data/walkforward
+      - artifacts/regimes
+      - data/live_sim
+      - tests
+      - docs/future_metrics_roadmap.md
+    outs:
+      - data/reporting

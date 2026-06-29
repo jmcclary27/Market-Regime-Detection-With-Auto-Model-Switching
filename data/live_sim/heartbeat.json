@@ -1,21 +1,6 @@
 {
-  "artifacts": {
-    "features_path": "data\\features\\20260622_174004Z.parquet",
-    "predictions_path": "data\\predictions\\predictions_1782150005.parquet",
-    "raw_path": "data\\raw\\live_sim\\SPY-QQQ_5m_20260622_174004Z.parquet",
-    "regimes_path": "data\\regimes\\20260622_174004Z.parquet"
-  },
-  "bar_timestamp_utc": "2026-06-22T17:30:00+00:00",
-  "decision_reason": "hold signal recorded without pending fill",
-  "message": "processed live simulation candle",
-  "pending_signal": null,
-  "prediction": 2.5582163452567572e-05,
-  "regime": "sideways",
-  "run_ts": "20260622_174004Z",
-  "selected_model_id": "expert_lightgbm_sideways",
-  "selected_model_name": "expert_lightgbm_sideways",
-  "signal": "HOLD",
-  "status": "ok",
-  "trade": null,
-  "updated_at_utc": "2026-06-22T17:40:06.056606+00:00"
+  "message": "market is closed",
+  "run_ts": "20260622_202754Z",
+  "status": "idle",
+  "updated_at_utc": "2026-06-22T20:27:54.360640+00:00"
 }

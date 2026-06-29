@@ -3,179 +3,38 @@
     "bearish": {
       "by_model": {
         "active": {
-          "mae": 0.01921069025020205,
-          "rmse": 0.025754979543232324
+          "mae": 0.007223930257336887,
+          "rmse": 0.010860710762968429
         },
         "baseline": {
-          "mae": 0.9611017820341818,
-          "rmse": 1.1204469578433653
-        },
-        "expert_arima_bearish": {
-          "mae": 0.01907696716410422,
-          "rmse": 0.025608040799140197
-        },
-        "expert_arima_bullish": {
-          "mae": 0.01907696716410422,
-          "rmse": 0.025608040799140197
-        },
-        "expert_arima_sideways": {
-          "mae": 0.01907696716410422,
-          "rmse": 0.025608040799140197
+          "mae": 1.1957087207289392,
+          "rmse": 1.3367856547408723
         },
         "expert_bullish_ridge_v0": {
-          "mae": 0.5752290590348857,
-          "rmse": 0.6311418897576068
+          "mae": 0.6315688081785478,
+          "rmse": 0.6891055367955328
         },
         "expert_lightgbm_bearish": {
-          "mae": 0.01921069025020205,
-          "rmse": 0.025754979543232324
+          "mae": 0.00723129039781097,
+          "rmse": 0.010882262840689088
         },
         "expert_lightgbm_bullish": {
-          "mae": 0.01921069025020205,
-          "rmse": 0.025754979543232324
+          "mae": 0.007197849822222691,
+          "rmse": 0.010840402853988141
         },
         "expert_lightgbm_sideways": {
-          "mae": 0.01921069025020205,
-          "rmse": 0.025754979543232324
+          "mae": 0.007223930257336887,
+          "rmse": 0.010860710762968429
         }
       },
-      "n": 1305,
+      "n": 24816,
       "rank": [
-        "expert_arima_bearish",
-        "expert_arima_bullish",
-        "expert_arima_sideways",
-        "active",
-        "expert_lightgbm_bearish",
         "expert_lightgbm_bullish",
+        "active",
         "expert_lightgbm_sideways",
+        "expert_lightgbm_bearish",
         "expert_bullish_ridge_v0",
         "baseline"
-      ]
-    },
-    "bullish": {
-      "by_model": {
-        "active": {
-          "mae": 0.005392225133478235,
-          "rmse": 0.007286253164121688
-        },
-        "baseline": {
-          "mae": 1.278033826934885,
-          "rmse": 1.400236344044967
-        },
-        "expert_arima_bearish": {
-          "mae": 0.005434587549845457,
-          "rmse": 0.007325403323494903
-        },
-        "expert_arima_bullish": {
-          "mae": 0.005434587549845457,
-          "rmse": 0.007325403323494903
-        },
-        "expert_arima_sideways": {
-          "mae": 0.005434587549845457,
-          "rmse": 0.007325403323494903
-        },
-        "expert_bullish_ridge_v0": {
-          "mae": 0.6703802031021147,
-          "rmse": 0.7238514857139232
-        },
-        "expert_lightgbm_bearish": {
-          "mae": 0.005392225133478235,
-          "rmse": 0.007286253164121688
-        },
-        "expert_lightgbm_bullish": {
-          "mae": 0.005392225133478235,
-          "rmse": 0.007286253164121688
-        },
-        "expert_lightgbm_sideways": {
-          "mae": 0.005392225133478235,
-          "rmse": 0.007286253164121688
-        }
-      },
-      "n": 26991,
-      "rank": [
-        "active",
-        "expert_lightgbm_bearish",
-        "expert_lightgbm_bullish",
-        "expert_lightgbm_sideways",
-        "expert_arima_bearish",
-        "expert_arima_bullish",
-        "expert_arima_sideways",
-        "expert_bullish_ridge_v0",
-        "baseline"
-      ]
-    },
-    "sideways": {
-      "by_model": {
-        "active": {
-          "mae": 0.011517705885086459,
-          "rmse": 0.015947936311897136
-        },
-        "baseline": {
-          "mae": 0.9085761823751399,
-          "rmse": 1.0880910636754553
-        },
-        "expert_arima_bearish": {
-          "mae": 0.011558540939725288,
-          "rmse": 0.015954697620974713
-        },
-        "expert_arima_bullish": {
-          "mae": 0.011558540939725288,
-          "rmse": 0.015954697620974713
-        },
-        "expert_arima_sideways": {
-          "mae": 0.011558540939725288,
-          "rmse": 0.015954697620974713
-        },
-        "expert_bullish_ridge_v0": {
-          "mae": 0.5580991800292331,
-          "rmse": 0.6077716731210482
-        },
-        "expert_lightgbm_bearish": {
-          "mae": 0.011517705885086459,
-          "rmse": 0.015947936311897136
-        },
-        "expert_lightgbm_bullish": {
-          "mae": 0.011517705885086459,
-          "rmse": 0.015947936311897136
-        },
-        "expert_lightgbm_sideways": {
-          "mae": 0.011517705885086459,
-          "rmse": 0.015947936311897136
-        }
-      },
-      "n": 7983,
-      "rank": [
-        "active",
-        "expert_lightgbm_bearish",
-        "expert_lightgbm_bullish",
-        "expert_lightgbm_sideways",
-        "expert_arima_bearish",
-        "expert_arima_bullish",
-        "expert_arima_sideways",
-        "expert_bullish_ridge_v0",
-        "baseline"
-      ]
-    },
-    "unknown": {
-      "by_model": {
-        "expert_arima_bearish": {
-          "mae": 0.00409491538719574,
-          "rmse": 0.005050323638906496
-        },
-        "expert_arima_bullish": {
-          "mae": 0.00409491538719574,
-          "rmse": 0.005050323638906496
-        },
-        "expert_arima_sideways": {
-          "mae": 0.00409491538719574,
-          "rmse": 0.005050323638906496
-        }
-      },
-      "n": 24,
-      "rank": [
-        "expert_arima_bearish",
-        "expert_arima_bullish",
-        "expert_arima_sideways"
       ]
     }
   },
@@ -196,59 +55,44 @@
   "overall": {
     "by_model": {
       "active": {
-        "mae": 0.00723717151616279,
-        "rmse": 0.010923532113050135
+        "mae": 0.007223930257336887,
+        "rmse": 0.010860710762968429
       },
       "baseline": {
-        "mae": 1.1853362141253847,
-        "rmse": 1.3282995636715729
-      },
-      "expert_arima_bearish": {
-        "mae": 0.007266569308595081,
-        "rmse": 0.010924234878352786
-      },
-      "expert_arima_bullish": {
-        "mae": 0.007266569308595081,
-        "rmse": 0.010924234878352786
-      },
-      "expert_arima_sideways": {
-        "mae": 0.007266569308595081,
-        "rmse": 0.010924234878352786
+        "mae": 1.1957087207289392,
+        "rmse": 1.3367856547408723
       },
       "expert_bullish_ridge_v0": {
-        "mae": 0.6422506612129075,
-        "rmse": 0.6967272991190675
+        "mae": 0.6315688081785478,
+        "rmse": 0.6891055367955328
       },
       "expert_lightgbm_bearish": {
-        "mae": 0.00723717151616279,
-        "rmse": 0.010923532113050135
+        "mae": 0.00723129039781097,
+        "rmse": 0.010882262840689088
       },
       "expert_lightgbm_bullish": {
-        "mae": 0.00723717151616279,
-        "rmse": 0.010923532113050135
+        "mae": 0.007197849822222691,
+        "rmse": 0.010840402853988141
       },
       "expert_lightgbm_sideways": {
-        "mae": 0.00723717151616279,
-        "rmse": 0.010923532113050135
+        "mae": 0.007223930257336887,
+        "rmse": 0.010860710762968429
       }
     },
-    "n": 36303,
+    "n": 24816,
     "rank": [
-      "active",
-      "expert_lightgbm_bearish",
       "expert_lightgbm_bullish",
+      "active",
       "expert_lightgbm_sideways",
-      "expert_arima_bearish",
-      "expert_arima_bullish",
-      "expert_arima_sideways",
+      "expert_lightgbm_bearish",
       "expert_bullish_ridge_v0",
       "baseline"
     ]
   },
-  "run_ts": "20260519_130612Z",
+  "run_ts": "1782760653",
   "target": {
     "requested_target_col": "log_return_1",
     "y_true_col": "log_return_1_x"
   },
-  "timestamp": "20260519_130612Z"
+  "timestamp": "1782760653"
 }

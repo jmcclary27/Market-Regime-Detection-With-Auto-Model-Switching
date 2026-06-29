@@ -53,6 +53,7 @@ data/predictions/
 
 # Evaluation outputs
 data/scorecards/
+data/reporting/
 
 # Run metadata
 data/runs/
