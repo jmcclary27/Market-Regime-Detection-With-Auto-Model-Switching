@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pytest
 
 from src.reporting.project_metrics import (
     discover_lineage_runs,
@@ -471,9 +472,9 @@ def _write_docs(root: Path) -> None:
         "| Data quality audit | Implemented | Missing-bar rate, duplicate-bar rate, stale-bar p95, late-data rate | Add provider-specific rule thresholds |\n"
         "| Infrastructure telemetry | Implemented | Pipeline success rate, p50/p95 runtime, per-step failure rate, mean recovery time | Add step-level alert thresholds |\n"
         "| Registry change log | Implemented | Active model tenure and churn | Add richer manual override annotations |\n"
-        "| Richer live/paper execution | Partial | Trade counts plus portfolio growth and drawdown | Add holding time, exposure, fill-cost decomposition, benchmark-relative return |\n"
+        "| Richer live/paper execution | Partial | Trade counts, portfolio growth and drawdown, decision coverage, and available execution costs | Add external fills, benchmark-relative return, and multi-asset normalized exposure |\n"
         "| Drift monitoring | Planned | None yet | Persist feature, prediction, and regime drift snapshots |\n"
-        "| Resource usage collection | Planned | None yet | Capture CPU, memory, storage growth, and artifact-size trends |\n"
+        "| Resource usage collection | Partial | Local managed storage and artifact-size snapshots | Capture CPU, memory, remote storage, and time-series resource snapshots |\n"
         "| Explicit cost accounting | Planned | None yet | Join resource usage with cost models and storage pricing |\n"
         "| Alerting history | Planned | None yet | Persist alert event logs and acknowledgement timings |\n"
         "| Calibration or classification outputs | Planned | None yet | Extend predictions artifacts with class labels and calibrated probabilities |\n"
@@ -577,21 +578,138 @@ def test_generate_project_metrics_best_effort_history(tmp_path: Path) -> None:
     assert latest_report["inventory"]["test_case_count"] == 3
     assert latest_report["inventory"]["saved_replay_audit_count"] == 1
     assert latest_report["live_sim"]["trade_count"] == 2
+    assert latest_report["live_sim"]["equity_prediction_coverage_rate"] is None
+    assert latest_report["live_sim"]["trade_fee_coverage_rate"] is None
+    assert latest_report["live_sim"].get("execution_fee_total") is None
     assert latest_report["replay"]["exact_pass_rate"] == 1.0
     assert latest_report["data_quality"]["ok_rate"] == 1.0
     assert latest_report["pipeline"]["success_rate"] == 0.5
     assert latest_report["deployments"]["event_count"] == 2
     assert latest_report["roadmap"]["implemented_count"] == 5
+    assert latest_report["roadmap"]["partial_count"] == 2
+    assert latest_report["roadmap"]["planned_count"] == 5
+    assert latest_report["artifact_storage"]["lineage_referenced_file_count"] == 15
+    assert latest_report["artifact_storage"]["lineage_referenced_existing_file_count"] == 5
+    assert latest_report["artifact_storage"]["lineage_referenced_total_bytes"] > 0
     assert "20260102_000000Z" in latest_md
     assert "docs/future_metrics_roadmap.md" in latest_md
     assert "Roadmap Coverage" in latest_md
     assert "Replay" in latest_md
+    assert "Artifact Storage" in latest_md
 
     assert manifest["subject_run_ts"] == "20260102_000000Z"
     assert manifest["history_run_ts"] == ["20260101_000000Z", "20260102_000000Z"]
     assert "latest_report.json" in manifest["output_hashes"]
     assert "docs/future_metrics_roadmap.md" in manifest["input_hashes"]
     assert "data/deployments/events.parquet" in manifest["input_hashes"]
+
+
+def test_generate_project_metrics_reports_available_execution_and_storage_metrics(
+    tmp_path: Path,
+) -> None:
+    _build_history_fixture(tmp_path)
+    live_dir = tmp_path / "data" / "live_sim"
+
+    equity_df = pd.DataFrame(
+        {
+            "timestamp": [
+                "2026-01-03T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+            ],
+            "cash": [1040.0, 1000.0, 940.0],
+            "position": [0.5, 0.0, 1.0],
+            "last_price": [120.0, 100.0, 110.0],
+            "portfolio_value": [1100.0, 1000.0, 1050.0],
+            "realized_pnl": [10.0, 0.0, 0.0],
+            "unrealized_pnl": [50.0, 0.0, 50.0],
+            "total_pnl": [60.0, 0.0, 50.0],
+            "cost_basis": [50.0, 0.0, 100.0],
+            "avg_entry_price": [100.0, 0.0, 100.0],
+            "regime": ["bearish", "sideways", "bullish"],
+            "active_model_id": ["model_bear", "model_sideways", "model_bull"],
+            "prediction": [-0.01, 0.0, 0.01],
+            "signal": ["SELL", "HOLD", "BUY"],
+            "action_taken": ["SELL", "NONE", "BUY"],
+            "reason": ["filled", "hold", "filled"],
+        }
+    )
+    equity_df.to_parquet(live_dir / "equity_curve.parquet", index=False)
+
+    trades_df = pd.DataFrame(
+        {
+            "timestamp": [
+                "2026-01-03T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                "2026-01-01T00:00:00Z",
+            ],
+            "signal_bar_timestamp": [
+                "2026-01-02T23:55:00Z",
+                "2026-01-01T23:55:00Z",
+                None,
+            ],
+            "fill_bar_timestamp": [
+                "2026-01-03T00:00:00Z",
+                "2026-01-02T00:00:00Z",
+                None,
+            ],
+            "fill_policy": ["next_open", "next_open", None],
+            "signal": ["SELL", "BUY", "HOLD"],
+            "action": ["SELL", "BUY", "NONE"],
+            "price": [120.0, 100.0, 100.0],
+            "fill_price": [119.88, 100.10, None],
+            "shares_delta": [-5.0, 10.0, 0.0],
+            "trade_value": [599.4, 1001.0, 0.0],
+            "fee": [0.05994, 0.1001, 0.0],
+            "realized_pnl_delta": [10.0, 0.0, 0.0],
+            "regime": ["bearish", "bullish", "sideways"],
+            "active_model_id": ["model_bear", "model_bull", "model_sideways"],
+            "prediction": [-0.01, 0.01, 0.0],
+            "reason": ["filled", "filled", "hold"],
+        }
+    )
+    trades_df.to_parquet(live_dir / "trades.parquet", index=False)
+
+    model_path = tmp_path / "models" / "experts" / "candidate.bin"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    model_path.write_bytes(b"candidate-model")
+
+    outputs = generate_project_metrics_report(project_root=tmp_path)
+    report = json.loads(outputs["latest_report_json"].read_text(encoding="utf-8"))
+    live_sim = report["live_sim"]
+    storage = report["artifact_storage"]
+
+    assert live_sim["start_portfolio_value"] == 1000.0
+    assert live_sim["end_portfolio_value"] == 1100.0
+    assert live_sim["total_return_pct"] == pytest.approx(10.0)
+    assert live_sim["equity_prediction_coverage_rate"] == 1.0
+    assert live_sim["equity_active_model_id_coverage_rate"] == 1.0
+    assert live_sim["equity_gross_exposure_coverage_rate"] == 1.0
+    assert live_sim["equity_gross_exposure_pct_max"] == pytest.approx(110.0 / 1050.0 * 100.0)
+    assert live_sim["equity_latest_total_pnl"] == 60.0
+    assert live_sim["decision_signal_buy_count"] == 1
+    assert live_sim["decision_action_sell_count"] == 1
+
+    assert live_sim["filled_trade_count"] == 2
+    assert live_sim["execution_signal_intent_count"] == 2
+    assert live_sim["execution_signal_outcome_coverage_rate"] == 1.0
+    assert live_sim["execution_signal_intent_fill_rate"] == 1.0
+    assert live_sim["trade_fill_price_coverage_rate"] == pytest.approx(2.0 / 3.0)
+    assert live_sim["signal_to_fill_delay_coverage_rate"] == 1.0
+    assert live_sim["signal_to_fill_delay_seconds_mean"] == pytest.approx(300.0)
+    assert live_sim["signal_to_fill_delay_seconds_p95"] == pytest.approx(300.0)
+    assert live_sim["executed_notional_total"] == pytest.approx(1600.4)
+    assert live_sim["execution_fee_total"] == pytest.approx(0.16004)
+    assert live_sim["execution_fee_effective_bps"] == pytest.approx(1.0)
+    assert live_sim["implied_slippage_cost_total"] == pytest.approx(1.6)
+    assert live_sim["implied_slippage_effective_bps"] == pytest.approx(10.0)
+    assert live_sim["estimated_execution_cost_total"] == pytest.approx(1.76004)
+    assert live_sim["execution_realized_pnl_delta_total"] == pytest.approx(10.0)
+
+    assert storage["model_artifact_file_count"] == 1
+    assert storage["model_artifact_total_bytes"] == len(b"candidate-model")
+    assert storage["managed_total_bytes"] >= len(b"candidate-model")
+    assert storage["lineage_referenced_size_coverage_rate"] == pytest.approx(5.0 / 15.0)
 
 
 def test_generate_project_metrics_is_deterministic(tmp_path: Path) -> None:

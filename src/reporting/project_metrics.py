@@ -42,6 +42,61 @@ BOOL_FIELDS = (
     "has_replay_audit_json",
 )
 
+MANAGED_STORAGE_ROOTS = (
+    "artifacts",
+    "data",
+    "models",
+    "registry",
+    "runs",
+    "mlruns",
+)
+
+EQUITY_COVERAGE_FIELDS = (
+    "timestamp",
+    "cash",
+    "position",
+    "last_price",
+    "portfolio_value",
+    "realized_pnl",
+    "unrealized_pnl",
+    "total_pnl",
+    "cost_basis",
+    "avg_entry_price",
+    "regime",
+    "active_model_id",
+    "prediction",
+    "signal",
+    "action_taken",
+    "reason",
+)
+
+TRADE_COVERAGE_FIELDS = (
+    "timestamp",
+    "signal_bar_timestamp",
+    "fill_bar_timestamp",
+    "fill_policy",
+    "signal",
+    "action",
+    "price",
+    "fill_price",
+    "shares_delta",
+    "trade_value",
+    "fee",
+    "realized_pnl_delta",
+    "cash",
+    "position",
+    "portfolio_value",
+    "realized_pnl",
+    "unrealized_pnl",
+    "total_pnl",
+    "cost_basis",
+    "avg_entry_price",
+    "regime",
+    "active_model_id",
+    "prediction",
+    "reason",
+)
+
 
 @dataclass(frozen=True)
 class HistoryRun:
@@ -219,6 +274,51 @@ def _finite_int(value: Any) -> int | None:
     except (TypeError, ValueError):
         return None
     return out
+
+
+def _field_coverage(frame: pd.DataFrame, field: str) -> float | None:
+    """Return populated-row coverage, or None when the field is not available."""
+    if frame.empty or field not in frame.columns:
+        return None
+
+    values = frame[field]
+    populated = values.notna()
+    if pd.api.types.is_object_dtype(values) or pd.api.types.is_string_dtype(values):
+        strings = values.astype("string").str.strip()
+        populated = populated & strings.notna() & strings.ne("")
+    return float(populated.fillna(False).mean())
+
+
+def _finite_numeric_series(frame: pd.DataFrame, field: str) -> pd.Series:
+    if field not in frame.columns:
+        return pd.Series(index=frame.index, dtype="float64")
+    return pd.to_numeric(frame[field], errors="coerce").replace(
+        [float("inf"), float("-inf")], float("nan")
+    )
+
+
+def _normalized_text_series(frame: pd.DataFrame, field: str) -> pd.Series:
+    if field not in frame.columns:
+        return pd.Series(index=frame.index, dtype="string")
+    return frame[field].astype("string").str.strip().str.upper()
+
+
+def _finite_sum(values: pd.Series) -> float | None:
+    finite = (
+        pd.to_numeric(values, errors="coerce")
+        .replace([float("inf"), float("-inf")], float("nan"))
+        .dropna()
+    )
+    return _finite_float(finite.sum()) if not finite.empty else None
+
+
+def _finite_mean(values: pd.Series) -> float | None:
+    finite = (
+        pd.to_numeric(values, errors="coerce")
+        .replace([float("inf"), float("-inf")], float("nan"))
+        .dropna()
+    )
+    return _finite_float(finite.mean()) if not finite.empty else None
 
 
 def _ranked_models(frame: pd.DataFrame, metric: str, *, lower_is_better: bool) -> list[str]:
@@ -675,7 +775,9 @@ def _replay_summary(runs_df: pd.DataFrame) -> dict[str, Any]:
             frame["replay_semantic_pass"].fillna(False).astype(bool).mean()
         )
     if "replay_max_prediction_drift" in frame.columns:
-        out["max_prediction_drift_worst"] = _finite_float(frame["replay_max_prediction_drift"].max())
+        out["max_prediction_drift_worst"] = _finite_float(
+            frame["replay_max_prediction_drift"].max()
+        )
     return out
 
 
@@ -730,7 +832,9 @@ def _pipeline_summary(runs_df: pd.DataFrame) -> dict[str, Any]:
             if status == "failed":
                 pending_failure = cast(pd.Timestamp, finished_at)
             elif status == "completed" and pending_failure is not None:
-                recoveries.append(max((cast(pd.Timestamp, finished_at) - pending_failure).total_seconds(), 0.0))
+                recoveries.append(
+                    max((cast(pd.Timestamp, finished_at) - pending_failure).total_seconds(), 0.0)
+                )
                 pending_failure = None
         if recoveries:
             out["mean_recovery_time_seconds"] = float(sum(recoveries) / len(recoveries))
@@ -755,7 +859,9 @@ def _deployment_and_registry_summary(
             out["rollback_count"] = int(decisions.get("rollback", 0))
             out["hold_count"] = int(decisions.get("hold", 0))
             out["blocked_count"] = int(decisions.get("blocked", 0))
-            completed = sum(int(decisions.get(name, 0)) for name in ("promote", "rollback", "hold", "blocked"))
+            completed = sum(
+                int(decisions.get(name, 0)) for name in ("promote", "rollback", "hold", "blocked")
+            )
             out["canary_completion_rate"] = completed / float(max(len(events_df), 1))
             out["promotion_precision"] = int(decisions.get("promote", 0)) / float(
                 max(int(decisions.get("promote", 0)) + int(decisions.get("rollback", 0)), 1)
@@ -835,6 +941,103 @@ def _test_inventory(project_root: Path) -> tuple[dict[str, Any], set[Path]]:
     )
 
 
+def _file_size_bytes(path: Path) -> int | None:
+    try:
+        if not path.is_file() or path.is_symlink():
+            return None
+        return int(path.stat().st_size)
+    except OSError:  # pragma: no cover - a file may disappear during collection
+        return None
+
+
+def _apply_lineage_artifact_size_metrics(
+    run_row: dict[str, Any], recorded_artifacts: dict[str, Path]
+) -> None:
+    sizes = [
+        size for path in recorded_artifacts.values() if (size := _file_size_bytes(path)) is not None
+    ]
+    ref_count = len(recorded_artifacts)
+    existing_count = len(sizes)
+    run_row["lineage_artifact_existing_file_count"] = existing_count
+    run_row["lineage_artifact_missing_file_count"] = ref_count - existing_count
+    run_row["lineage_artifact_size_coverage_rate"] = (
+        existing_count / float(ref_count) if ref_count else None
+    )
+    run_row["lineage_artifact_total_bytes"] = sum(sizes) if sizes else None
+    run_row["lineage_artifact_max_bytes"] = max(sizes) if sizes else None
+
+
+def _path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
+
+
+def _artifact_storage_summary(
+    project_root: Path,
+    *,
+    lineage_artifact_paths: set[Path],
+    excluded_dir: Path,
+) -> tuple[dict[str, Any], set[Path]]:
+    """Collect a deterministic local storage snapshot without counting report outputs."""
+    consumed: set[Path] = set()
+    by_root: dict[str, dict[str, int]] = {}
+    managed_file_count = 0
+    managed_total_bytes = 0
+
+    for root_name in MANAGED_STORAGE_ROOTS:
+        base = project_root / root_name
+        file_count = 0
+        total_bytes = 0
+        if base.exists():
+            for path in sorted(base.rglob("*")):
+                if _path_is_within(path, excluded_dir):
+                    continue
+                size = _file_size_bytes(path)
+                if size is None:
+                    continue
+                file_count += 1
+                total_bytes += size
+        by_root[root_name] = {
+            "file_count": file_count,
+            "total_bytes": total_bytes,
+        }
+        managed_file_count += file_count
+        managed_total_bytes += total_bytes
+
+    lineage_sizes: list[int] = []
+    for path in sorted(lineage_artifact_paths):
+        size = _file_size_bytes(path)
+        if size is not None:
+            lineage_sizes.append(size)
+            consumed.add(path)
+
+    return (
+        {
+            "scope": "local_project_managed_storage",
+            "managed_roots": list(MANAGED_STORAGE_ROOTS),
+            "managed_file_count": managed_file_count,
+            "managed_total_bytes": managed_total_bytes,
+            "model_artifact_file_count": by_root["models"]["file_count"],
+            "model_artifact_total_bytes": by_root["models"]["total_bytes"],
+            "lineage_referenced_file_count": len(lineage_artifact_paths),
+            "lineage_referenced_existing_file_count": len(lineage_sizes),
+            "lineage_referenced_missing_file_count": len(lineage_artifact_paths)
+            - len(lineage_sizes),
+            "lineage_referenced_size_coverage_rate": (
+                len(lineage_sizes) / float(len(lineage_artifact_paths))
+                if lineage_artifact_paths
+                else None
+            ),
+            "lineage_referenced_total_bytes": sum(lineage_sizes) if lineage_sizes else None,
+            "by_root": by_root,
+        },
+        consumed,
+    )
+
+
 def _live_sim_summary(project_root: Path) -> tuple[dict[str, Any] | None, set[Path], str | None]:
     live_dir = project_root / "data" / "live_sim"
     account_path = live_dir / "account_state.json"
@@ -854,11 +1057,26 @@ def _live_sim_summary(project_root: Path) -> tuple[dict[str, Any] | None, set[Pa
             "cash",
             "position",
             "portfolio_value",
+            "realized_pnl",
             "unrealized_pnl",
             "total_pnl",
+            "cost_basis",
+            "avg_entry_price",
             "last_price",
         ):
             out[f"latest_{field}"] = _finite_float(account_json.get(field))
+        latest_position = _finite_float(account_json.get("position"))
+        latest_price = _finite_float(account_json.get("last_price"))
+        latest_value = _finite_float(account_json.get("portfolio_value"))
+        if (
+            latest_position is not None
+            and latest_price is not None
+            and latest_value is not None
+            and latest_value != 0.0
+        ):
+            out["latest_gross_exposure_pct"] = (
+                abs(latest_position * latest_price) / latest_value
+            ) * 100.0
         out["account_updated_at"] = account_json.get("updated_at")
     elif account_error is not None:
         return None, consumed, account_error
@@ -868,43 +1086,248 @@ def _live_sim_summary(project_root: Path) -> tuple[dict[str, Any] | None, set[Pa
         consumed.add(equity_path)
         eq = equity_df.copy()
         if "timestamp" in eq.columns:
-            eq["timestamp"] = pd.to_datetime(eq["timestamp"], utc=True, errors="coerce")
+            eq["_report_timestamp"] = pd.to_datetime(eq["timestamp"], utc=True, errors="coerce")
+            eq = eq.sort_values("_report_timestamp", kind="mergesort", na_position="last")
+
+        out["equity_snapshot_count"] = int(len(eq))
+        for field in EQUITY_COVERAGE_FIELDS:
+            out[f"equity_{field}_coverage_rate"] = _field_coverage(eq, field)
+
         if "portfolio_value" in eq.columns:
-            values = pd.to_numeric(eq["portfolio_value"], errors="coerce")
-            first_value = _finite_float(values.iloc[0]) if not values.empty else None
-            last_value = _finite_float(values.iloc[-1]) if not values.empty else None
+            values = _finite_numeric_series(eq, "portfolio_value")
+            finite_values = values.dropna()
+            first_value = _finite_float(finite_values.iloc[0]) if not finite_values.empty else None
+            last_value = _finite_float(finite_values.iloc[-1]) if not finite_values.empty else None
             out["start_portfolio_value"] = first_value
             out["end_portfolio_value"] = last_value
             if first_value is not None and first_value != 0.0 and last_value is not None:
                 out["total_return_pct"] = ((last_value / first_value) - 1.0) * 100.0
 
-            peak = values.cummax()
-            drawdown = (values / peak) - 1.0
+            positive_values = values.where(values > 0.0).dropna()
+            peak = positive_values.cummax()
+            drawdown = ((positive_values / peak) - 1.0).replace(
+                [float("inf"), float("-inf")], float("nan")
+            )
             out["max_drawdown_pct"] = (
-                _finite_float(drawdown.min() * 100.0) if not drawdown.empty else None
+                _finite_float(drawdown.min() * 100.0) if not drawdown.dropna().empty else None
             )
 
-        if "timestamp" in eq.columns and not eq["timestamp"].dropna().empty:
-            out["start_timestamp"] = str(eq["timestamp"].dropna().iloc[0].isoformat())
-            out["end_timestamp"] = str(eq["timestamp"].dropna().iloc[-1].isoformat())
+        if "_report_timestamp" in eq.columns and not eq["_report_timestamp"].dropna().empty:
+            timestamps = eq["_report_timestamp"].dropna()
+            out["start_timestamp"] = str(timestamps.iloc[0].isoformat())
+            out["end_timestamp"] = str(timestamps.iloc[-1].isoformat())
+            if len(timestamps) > 1:
+                out["equity_history_duration_seconds"] = _finite_float(
+                    (timestamps.iloc[-1] - timestamps.iloc[0]).total_seconds()
+                )
+
         if "regime" in eq.columns:
             out["unique_regimes_seen"] = int(eq["regime"].dropna().astype(str).nunique())
         if "active_model_id" in eq.columns:
             out["unique_active_models_seen"] = int(
                 eq["active_model_id"].dropna().astype(str).nunique()
             )
+
+        for field in ("realized_pnl", "unrealized_pnl", "total_pnl"):
+            values = _finite_numeric_series(eq, field).dropna()
+            if not values.empty:
+                out[f"equity_latest_{field}"] = _finite_float(values.iloc[-1])
+            if len(values) > 1:
+                out[f"equity_{field}_change"] = _finite_float(values.iloc[-1] - values.iloc[0])
+
+        position = _finite_numeric_series(eq, "position")
+        finite_positions = position.dropna()
+        if not finite_positions.empty:
+            out["equity_positioned_snapshot_rate"] = float((finite_positions.abs() > 0.0).mean())
+
+        exposure_inputs = {"position", "last_price", "portfolio_value"}
+        if exposure_inputs.issubset(eq.columns):
+            prices = _finite_numeric_series(eq, "last_price")
+            portfolio_values = _finite_numeric_series(eq, "portfolio_value")
+            valid_exposure = (
+                position.notna()
+                & prices.notna()
+                & portfolio_values.notna()
+                & (portfolio_values != 0.0)
+            )
+            exposures = pd.Series(float("nan"), index=eq.index, dtype="float64")
+            exposures.loc[valid_exposure] = (
+                (position.loc[valid_exposure].abs() * prices.loc[valid_exposure])
+                / portfolio_values.loc[valid_exposure].abs()
+            ) * 100.0
+            finite_exposures = exposures.dropna()
+            out["equity_gross_exposure_coverage_rate"] = float(valid_exposure.mean())
+            if not finite_exposures.empty:
+                out["equity_gross_exposure_pct_mean"] = _finite_mean(finite_exposures)
+                out["equity_gross_exposure_pct_p95"] = _series_quantile(finite_exposures, 0.95)
+                out["equity_gross_exposure_pct_max"] = _finite_float(finite_exposures.max())
+
+        if "signal" in eq.columns:
+            signals = _normalized_text_series(eq, "signal")
+            for signal in ("BUY", "SELL", "HOLD"):
+                out[f"decision_signal_{signal.lower()}_count"] = int((signals == signal).sum())
+        if "action_taken" in eq.columns:
+            actions = _normalized_text_series(eq, "action_taken")
+            for action in ("BUY", "SELL", "NONE"):
+                out[f"decision_action_{action.lower()}_count"] = int((actions == action).sum())
     elif equity_error is not None:
         return None, consumed, equity_error
 
     trades_df, trades_error = _maybe_read_parquet(trades_path)
     if trades_df is not None:
         consumed.add(trades_path)
-        out["trade_count"] = int(len(trades_df))
+        trades = trades_df.copy()
+        if "timestamp" in trades.columns:
+            trades["_report_timestamp"] = pd.to_datetime(
+                trades["timestamp"], utc=True, errors="coerce"
+            )
+            trades = trades.sort_values("_report_timestamp", kind="mergesort", na_position="last")
+
+        out["trade_count"] = int(len(trades))
+        out["execution_attempt_count"] = int(len(trades))
+        for field in TRADE_COVERAGE_FIELDS:
+            out[f"trade_{field}_coverage_rate"] = _field_coverage(trades, field)
+
+        if "_report_timestamp" in trades.columns and not trades["_report_timestamp"].dropna().empty:
+            timestamps = trades["_report_timestamp"].dropna()
+            out["trade_start_timestamp"] = str(timestamps.iloc[0].isoformat())
+            out["trade_end_timestamp"] = str(timestamps.iloc[-1].isoformat())
+
         if "action" in trades_df.columns:
-            action_counts = trades_df["action"].fillna("UNKNOWN").astype(str).value_counts()
+            actions = _normalized_text_series(trades, "action")
+            action_counts = actions.value_counts()
             out["buy_count"] = int(action_counts.get("BUY", 0))
             out["sell_count"] = int(action_counts.get("SELL", 0))
             out["none_count"] = int(action_counts.get("NONE", 0))
+            known_outcomes = actions.isin(["BUY", "SELL", "NONE"])
+            filled = actions.isin(["BUY", "SELL"])
+            known_outcome_count = int(known_outcomes.sum())
+            filled_count = int(filled.sum())
+            out["filled_trade_count"] = filled_count
+            out["unfilled_execution_count"] = int((actions == "NONE").sum())
+            out["execution_outcome_coverage_rate"] = (
+                float(known_outcomes.mean()) if not trades.empty else None
+            )
+            out["filled_trade_rate"] = (
+                filled_count / float(known_outcome_count) if known_outcome_count else None
+            )
+        else:
+            actions = pd.Series(index=trades.index, dtype="string")
+            filled = pd.Series(False, index=trades.index, dtype=bool)
+            filled_count = 0
+
+        if "signal" in trades.columns:
+            signals = _normalized_text_series(trades, "signal")
+            for signal in ("BUY", "SELL", "HOLD"):
+                out[f"execution_signal_{signal.lower()}_count"] = int((signals == signal).sum())
+            intent = signals.isin(["BUY", "SELL"])
+            intent_count = int(intent.sum())
+            out["execution_signal_intent_count"] = intent_count
+            if "action" in trades.columns and intent_count:
+                known_intent_outcomes = intent & actions.isin(["BUY", "SELL", "NONE"])
+                out["execution_signal_outcome_coverage_rate"] = float(
+                    known_intent_outcomes.sum() / float(intent_count)
+                )
+                if bool(known_intent_outcomes.any()):
+                    out["execution_signal_intent_fill_rate"] = float(
+                        (actions[known_intent_outcomes] == signals[known_intent_outcomes]).mean()
+                    )
+
+        fill_timing_inputs = {"action", "signal_bar_timestamp", "fill_bar_timestamp"}
+        if fill_timing_inputs.issubset(trades.columns):
+            signal_times = pd.to_datetime(trades["signal_bar_timestamp"], utc=True, errors="coerce")
+            fill_times = pd.to_datetime(trades["fill_bar_timestamp"], utc=True, errors="coerce")
+            valid_fill_delay = filled & signal_times.notna() & fill_times.notna()
+            out["signal_to_fill_delay_coverage_rate"] = (
+                float(valid_fill_delay.sum() / float(filled_count)) if filled_count else None
+            )
+            if bool(valid_fill_delay.any()):
+                fill_delay_seconds = (
+                    (fill_times - signal_times).dt.total_seconds().where(valid_fill_delay)
+                )
+                out["signal_to_fill_delay_seconds_mean"] = _finite_mean(fill_delay_seconds)
+                out["signal_to_fill_delay_seconds_p50"] = _series_quantile(fill_delay_seconds, 0.50)
+                out["signal_to_fill_delay_seconds_p95"] = _series_quantile(fill_delay_seconds, 0.95)
+                out["signal_to_fill_delay_seconds_max"] = _finite_float(fill_delay_seconds.max())
+
+        if "trade_value" in trades.columns:
+            trade_values = _finite_numeric_series(trades, "trade_value")
+            if "action" in trades.columns:
+                trade_values = trade_values.where(filled)
+            out["executed_notional_total"] = _finite_sum(trade_values)
+            out["executed_notional_mean"] = _finite_mean(trade_values)
+
+        if "fee" in trades.columns:
+            fees = _finite_numeric_series(trades, "fee")
+            if "action" in trades.columns:
+                fees = fees.where(filled)
+            out["execution_fee_total"] = _finite_sum(fees)
+            out["execution_fee_mean"] = _finite_mean(fees)
+            if "trade_value" in trades.columns:
+                fee_mask = fees.notna() & trade_values.notna() & (trade_values > 0.0)
+                fee_notional = _finite_sum(trade_values[fee_mask])
+                fee_total = _finite_sum(fees[fee_mask])
+                if fee_notional is not None and fee_notional != 0.0 and fee_total is not None:
+                    out["execution_fee_effective_bps"] = (fee_total / fee_notional) * 10_000.0
+
+        slippage_inputs = {"action", "price", "fill_price", "shares_delta"}
+        if slippage_inputs.issubset(trades.columns):
+            prices = _finite_numeric_series(trades, "price")
+            fill_prices = _finite_numeric_series(trades, "fill_price")
+            shares = _finite_numeric_series(trades, "shares_delta")
+            valid_slippage = filled & prices.notna() & fill_prices.notna() & shares.notna()
+            out["implied_slippage_coverage_rate"] = (
+                float(valid_slippage.sum() / float(filled_count)) if filled_count else None
+            )
+            if bool(valid_slippage.any()):
+                directional_difference = pd.Series(
+                    float("nan"), index=trades.index, dtype="float64"
+                )
+                buy_mask = valid_slippage & (actions == "BUY")
+                sell_mask = valid_slippage & (actions == "SELL")
+                directional_difference.loc[buy_mask] = (
+                    fill_prices.loc[buy_mask] - prices.loc[buy_mask]
+                )
+                directional_difference.loc[sell_mask] = (
+                    prices.loc[sell_mask] - fill_prices.loc[sell_mask]
+                )
+                slippage_cost = directional_difference * shares.abs()
+                out["implied_slippage_cost_total"] = _finite_sum(slippage_cost)
+                out["implied_slippage_cost_mean"] = _finite_mean(slippage_cost)
+
+                reference_notional = (prices * shares.abs()).where(valid_slippage)
+                slippage_total = _finite_sum(slippage_cost)
+                reference_total = _finite_sum(reference_notional)
+                if (
+                    reference_total is not None
+                    and reference_total != 0.0
+                    and slippage_total is not None
+                ):
+                    out["implied_slippage_effective_bps"] = (
+                        slippage_total / reference_total
+                    ) * 10_000.0
+
+                if "fee" in trades.columns:
+                    fees = _finite_numeric_series(trades, "fee")
+                    valid_cost = valid_slippage & fees.notna()
+                    out["estimated_execution_cost_coverage_rate"] = (
+                        float(valid_cost.sum() / float(filled_count)) if filled_count else None
+                    )
+                    if bool(valid_cost.any()):
+                        combined_cost = (slippage_cost + fees).where(valid_cost)
+                        out["estimated_execution_cost_total"] = _finite_sum(combined_cost)
+
+        if "realized_pnl_delta" in trades.columns:
+            realized_pnl_delta = _finite_numeric_series(trades, "realized_pnl_delta")
+            if "action" in trades.columns:
+                realized_pnl_delta = realized_pnl_delta.where(filled)
+            out["execution_realized_pnl_delta_total"] = _finite_sum(realized_pnl_delta)
+            out["execution_realized_pnl_delta_mean"] = _finite_mean(realized_pnl_delta)
+
+        for field in ("portfolio_value", "realized_pnl", "unrealized_pnl", "total_pnl"):
+            values = _finite_numeric_series(trades, field).dropna()
+            if not values.empty:
+                out[f"execution_latest_{field}"] = _finite_float(values.iloc[-1])
     elif trades_error is not None:
         return None, consumed, trades_error
 
@@ -946,6 +1369,18 @@ def _format_int(value: Any) -> str:
     return f"{val}"
 
 
+def _format_bytes(value: Any) -> str:
+    size = _finite_float(value)
+    if size is None or size < 0.0:
+        return "n/a"
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    unit_index = 0
+    while size >= 1024.0 and unit_index < len(units) - 1:
+        size /= 1024.0
+        unit_index += 1
+    return f"{size:.2f} {units[unit_index]}"
+
+
 def _format_bool(value: Any) -> str:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return "n/a"
@@ -964,6 +1399,7 @@ def _markdown_summary(
     deployments_summary: dict[str, Any] | None,
     data_quality_summary: dict[str, Any],
     pipeline_summary: dict[str, Any],
+    artifact_storage_summary: dict[str, Any],
     roadmap_summary: dict[str, Any],
     roadmap_path_display: str,
 ) -> str:
@@ -1032,7 +1468,17 @@ def _markdown_summary(
                 f"| End portfolio value | {_format_number(live_sim.get('end_portfolio_value'), 2)} |",
                 f"| Total return % | {_format_number(live_sim.get('total_return_pct'), 2)} |",
                 f"| Max drawdown % | {_format_number(live_sim.get('max_drawdown_pct'), 2)} |",
+                f"| Decision snapshots | {_format_int(live_sim.get('equity_snapshot_count'))} |",
                 f"| Trade count | {_format_int(live_sim.get('trade_count'))} |",
+                f"| Filled trades | {_format_int(live_sim.get('filled_trade_count'))} |",
+                f"| Signal intent fill rate | {_format_number(live_sim.get('execution_signal_intent_fill_rate'))} |",
+                f"| Prediction coverage | {_format_number(live_sim.get('equity_prediction_coverage_rate'))} |",
+                f"| Active-model coverage | {_format_number(live_sim.get('equity_active_model_id_coverage_rate'))} |",
+                f"| Gross exposure p95 % | {_format_number(live_sim.get('equity_gross_exposure_pct_p95'), 2)} |",
+                f"| Executed notional | {_format_number(live_sim.get('executed_notional_total'), 2)} |",
+                f"| Execution fees | {_format_number(live_sim.get('execution_fee_total'), 2)} |",
+                f"| Implied slippage cost | {_format_number(live_sim.get('implied_slippage_cost_total'), 2)} |",
+                f"| Latest total PnL | {_format_number(live_sim.get('latest_total_pnl'), 2)} |",
                 f"| Unique regimes seen | {_format_int(live_sim.get('unique_regimes_seen'))} |",
                 f"| Unique active models seen | {_format_int(live_sim.get('unique_active_models_seen'))} |",
                 "",
@@ -1054,6 +1500,21 @@ def _markdown_summary(
             f"| Replay audits saved | {_format_int(inventory.get('saved_replay_audit_count'))} |",
             f"| Data-quality audits saved | {_format_int(inventory.get('saved_data_quality_audit_count'))} |",
             f"| Pipeline summaries saved | {_format_int(inventory.get('saved_pipeline_run_count'))} |",
+            "",
+        ]
+    )
+    lines.extend(
+        [
+            "## Artifact Storage",
+            "| Metric | Value |",
+            "| --- | --- |",
+            f"| Managed files | {_format_int(artifact_storage_summary.get('managed_file_count'))} |",
+            f"| Managed storage | {_format_bytes(artifact_storage_summary.get('managed_total_bytes'))} |",
+            f"| Model artifact files | {_format_int(artifact_storage_summary.get('model_artifact_file_count'))} |",
+            f"| Model artifact storage | {_format_bytes(artifact_storage_summary.get('model_artifact_total_bytes'))} |",
+            f"| Lineage-referenced files present | {_format_int(artifact_storage_summary.get('lineage_referenced_existing_file_count'))} / {_format_int(artifact_storage_summary.get('lineage_referenced_file_count'))} |",
+            f"| Lineage artifact-size coverage | {_format_number(artifact_storage_summary.get('lineage_referenced_size_coverage_rate'))} |",
+            f"| Lineage-referenced storage | {_format_bytes(artifact_storage_summary.get('lineage_referenced_total_bytes'))} |",
             "",
         ]
     )
@@ -1210,6 +1671,7 @@ def generate_project_metrics_report(
         raise ValueError("roadmap_path could not be resolved")
 
     consumed_paths: set[Path] = set()
+    lineage_artifact_paths: set[Path] = set()
     run_rows: list[dict[str, Any]] = []
     model_rows_out: list[dict[str, Any]] = []
 
@@ -1230,7 +1692,9 @@ def generate_project_metrics_report(
         consumed_paths.add(run.lineage_path)
 
         recorded_artifacts = _lineage_artifact_paths(root, run)
+        lineage_artifact_paths.update(recorded_artifacts.values())
         run_row["lineage_artifact_ref_count"] = len(recorded_artifacts)
+        _apply_lineage_artifact_size_metrics(run_row, recorded_artifacts)
         for key in LINEAGE_ARTIFACT_KEYS:
             run_row[f"has_recorded_{key}"] = key in recorded_artifacts
 
@@ -1306,23 +1770,24 @@ def generate_project_metrics_report(
         data_quality_json, data_quality_error = _maybe_read_json(
             companions.get("data_quality_audit_json")
         )
-        if (
-            data_quality_json is not None
-            and companions.get("data_quality_audit_json") is not None
-        ):
+        if data_quality_json is not None and companions.get("data_quality_audit_json") is not None:
             consumed_paths.add(cast(Path, companions["data_quality_audit_json"]))
             _apply_data_quality_metrics(run_row, data_quality_json)
         elif data_quality_error is not None:
             run_row["data_quality_audit_error"] = data_quality_error
 
-        pipeline_run_json, pipeline_run_error = _maybe_read_json(companions.get("pipeline_run_json"))
+        pipeline_run_json, pipeline_run_error = _maybe_read_json(
+            companions.get("pipeline_run_json")
+        )
         if pipeline_run_json is not None and companions.get("pipeline_run_json") is not None:
             consumed_paths.add(cast(Path, companions["pipeline_run_json"]))
             _apply_pipeline_run_metrics(run_row, pipeline_run_json)
         elif pipeline_run_error is not None:
             run_row["pipeline_run_error"] = pipeline_run_error
 
-        replay_audit_json, replay_audit_error = _maybe_read_json(companions.get("replay_audit_json"))
+        replay_audit_json, replay_audit_error = _maybe_read_json(
+            companions.get("replay_audit_json")
+        )
         if replay_audit_json is not None and companions.get("replay_audit_json") is not None:
             consumed_paths.add(cast(Path, companions["replay_audit_json"]))
             _apply_replay_metrics(run_row, replay_audit_json)
@@ -1401,8 +1866,16 @@ def generate_project_metrics_report(
 
     live_sim, live_sim_paths, live_sim_error = _live_sim_summary(root)
     consumed_paths.update(live_sim_paths)
-    deployments_summary, deployment_paths, deployments_error = _deployment_and_registry_summary(root)
+    deployments_summary, deployment_paths, deployments_error = _deployment_and_registry_summary(
+        root
+    )
     consumed_paths.update(deployment_paths)
+    artifact_storage, storage_paths = _artifact_storage_summary(
+        root,
+        lineage_artifact_paths=lineage_artifact_paths,
+        excluded_dir=output_dir,
+    )
+    consumed_paths.update(storage_paths)
 
     if roadmap.exists():
         consumed_paths.add(roadmap)
@@ -1456,6 +1929,7 @@ def generate_project_metrics_report(
             },
         },
         "live_sim": live_sim,
+        "artifact_storage": artifact_storage,
         "replay": replay_summary,
         "deployments": deployments_summary,
         "data_quality": data_quality_summary,
@@ -1476,6 +1950,7 @@ def generate_project_metrics_report(
         deployments_summary=deployments_summary,
         data_quality_summary=data_quality_summary,
         pipeline_summary=pipeline_summary,
+        artifact_storage_summary=artifact_storage,
         roadmap_summary=roadmap_summary,
         roadmap_path_display=roadmap_display,
     )

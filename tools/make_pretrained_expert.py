@@ -1,170 +1,398 @@
-# scripts/train_expert_bullish.py (or wherever you keep this)
+"""Train a validated Ridge regime expert as a candidate artifact.
+
+Historically this script wrote directly to ``models/pretrained`` and trained on
+as few as two rows. It now writes versioned candidates by default and only
+publishes to an inference-scanned directory when explicitly requested.
+"""
+
 from __future__ import annotations
 
+import argparse
+import json
+import platform
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import joblib
+import numpy as np
 import pandas as pd
+import sklearn
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Ridge
+from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.pipeline import Pipeline
 
-FEATURES_PATH = Path("data/features/latest.parquet")
-REGIMES_PATH = Path("data/regimes/latest.parquet")
+REGIMES = {"bullish", "bearish", "sideways"}
 
-TIMESTAMP_COL = "timestamp"
-RETURN_COL = "log_return_1"
-TARGET_COL = "target_next_return"
+
+@dataclass(frozen=True)
+class TrainConfig:
+    features_path: Path = Path("data/features/latest.parquet")
+    regimes_path: Path = Path("data/regimes/latest.parquet")
+    regime: str = "bullish"
+    return_col: str = "log_return_1"
+    target_col: str = "target_next_return"
+    target_shift: int = -1
+    ridge_alpha: float = 1.0
+    min_regime_rows: int = 200
+    min_train_rows: int = 100
+    min_test_rows: int = 25
+    train_frac: float = 0.70
+    val_frac: float = 0.15
+    test_frac: float = 0.15
+    output_dir: Path = Path("models/candidates/pretrained")
+    model_name: str = "expert_bullish_ridge"
+    publish: bool = False
+    publish_dir: Path | None = None
+    publish_name: str | None = None
+
+
+def _parse_args() -> TrainConfig:
+    parser = argparse.ArgumentParser(description="Train a regime-specific Ridge candidate.")
+    parser.add_argument("--features-path", default=str(TrainConfig.features_path))
+    parser.add_argument("--regimes-path", default=str(TrainConfig.regimes_path))
+    parser.add_argument("--regime", choices=sorted(REGIMES), default=TrainConfig.regime)
+    parser.add_argument("--return-col", default=TrainConfig.return_col)
+    parser.add_argument("--target-col", default=TrainConfig.target_col)
+    parser.add_argument("--target-shift", type=int, default=TrainConfig.target_shift)
+    parser.add_argument("--ridge-alpha", type=float, default=TrainConfig.ridge_alpha)
+    parser.add_argument("--min-regime-rows", type=int, default=TrainConfig.min_regime_rows)
+    parser.add_argument("--min-train-rows", type=int, default=TrainConfig.min_train_rows)
+    parser.add_argument("--min-test-rows", type=int, default=TrainConfig.min_test_rows)
+    parser.add_argument("--train-frac", type=float, default=TrainConfig.train_frac)
+    parser.add_argument("--val-frac", type=float, default=TrainConfig.val_frac)
+    parser.add_argument("--test-frac", type=float, default=TrainConfig.test_frac)
+    parser.add_argument("--output-dir", default=str(TrainConfig.output_dir))
+    parser.add_argument("--model-name", default=TrainConfig.model_name)
+    parser.add_argument(
+        "--publish",
+        action="store_true",
+        help="Explicitly copy the validated artifact into --publish-dir for inference discovery.",
+    )
+    parser.add_argument(
+        "--publish-dir",
+        default=None,
+        help="Required with --publish; typically models/pretrained after review.",
+    )
+    parser.add_argument(
+        "--publish-name",
+        default=None,
+        help="Published filename stem. Defaults to --model-name.",
+    )
+    args = parser.parse_args()
+    if args.publish and not args.publish_dir:
+        parser.error("--publish requires --publish-dir so the production destination is explicit")
+
+    return TrainConfig(
+        features_path=Path(args.features_path),
+        regimes_path=Path(args.regimes_path),
+        regime=str(args.regime),
+        return_col=str(args.return_col),
+        target_col=str(args.target_col),
+        target_shift=int(args.target_shift),
+        ridge_alpha=float(args.ridge_alpha),
+        min_regime_rows=int(args.min_regime_rows),
+        min_train_rows=int(args.min_train_rows),
+        min_test_rows=int(args.min_test_rows),
+        train_frac=float(args.train_frac),
+        val_frac=float(args.val_frac),
+        test_frac=float(args.test_frac),
+        output_dir=Path(args.output_dir),
+        model_name=str(args.model_name),
+        publish=bool(args.publish),
+        publish_dir=Path(args.publish_dir) if args.publish_dir else None,
+        publish_name=str(args.publish_name) if args.publish_name else None,
+    )
 
 
 def _resolve_col(df: pd.DataFrame, base: str) -> str:
-    """
-    Resolve base / base_x / base_y, and also handle "double suffix" cases that can happen
-    when you merge a wide features frame with another frame that accidentally shares names.
-
-    Priority order:
-      1) base
-      2) base_x
-      3) base_y
-      4) any column that starts with base + "_" (pick the first in sorted order)
-    """
-    if base in df.columns:
-        return base
-    if f"{base}_x" in df.columns:
-        return f"{base}_x"
-    if f"{base}_y" in df.columns:
-        return f"{base}_y"
-
-    # Fallback for double-suffix or unexpected collisions:
-    candidates = sorted([c for c in df.columns if c.startswith(f"{base}_")])
-    if candidates:
-        return candidates[0]
-
-    raise KeyError(f"Expected column '{base}' (or suffixed) not found. cols={list(df.columns)}")
+    """Resolve a long-form or wide-pair feature column without ambiguous suffix guessing."""
+    for candidate in (base, f"{base}_x", f"{base}_y"):
+        if candidate in df.columns:
+            return candidate
+    raise KeyError(f"Expected '{base}' (or _x/_y variant). Available columns: {list(df.columns)}")
 
 
-def _resolve_pair_feature_cols(feats: pd.DataFrame) -> list[str]:
-    """
-    Lock the expert to the canonical 6-feature contract:
-      close_x, log_return_1_x, sma_10_x, close_y, log_return_1_y, sma_10_y
+def _load_regime_labels(features: pd.DataFrame, cfg: TrainConfig) -> pd.DataFrame:
+    if "timestamp" not in features.columns:
+        raise KeyError("Features must contain timestamp for regime-label alignment.")
+    if "regime" in features.columns:
+        return features.copy()
+    if not cfg.regimes_path.exists():
+        raise FileNotFoundError(f"Regimes path not found: {cfg.regimes_path}")
 
-    If the data is long-form (no _x/_y), this will fall back to:
-      close, log_return_1, sma_10
-    """
-    base_cols = ["close", "log_return_1", "sma_10"]
+    labels = pd.read_parquet(cfg.regimes_path)
+    missing = {"timestamp", "regime"} - set(labels.columns)
+    if missing:
+        raise KeyError(
+            f"Regimes path is missing {sorted(missing)}. Available columns: {sorted(labels.columns)}"
+        )
+    labels = labels.loc[:, ["timestamp", "regime"]].drop_duplicates("timestamp", keep="last")
+    return features.merge(labels, on="timestamp", how="left", validate="many_to_one")
 
-    # Wide (preferred): require all x/y
-    wide = [f"{c}_x" for c in base_cols] + [f"{c}_y" for c in base_cols]
-    if all(c in feats.columns for c in wide):
-        return wide
 
-    # Long fallback
-    if all(c in feats.columns for c in base_cols):
-        return base_cols
-
-    raise KeyError(
-        "Features do not match expected schema. Need either "
-        f"{wide} (wide) or {base_cols} (long). cols={list(feats.columns)}"
+def _time_split(
+    df: pd.DataFrame, train_frac: float, val_frac: float, test_frac: float
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if not np.isclose(train_frac + val_frac + test_frac, 1.0):
+        raise ValueError("train_frac + val_frac + test_frac must equal 1.0")
+    n = len(df)
+    n_train = int(round(n * train_frac))
+    n_val = int(round(n * val_frac))
+    n_test = n - n_train - n_val
+    if n_train <= 0 or n_val <= 0 or n_test <= 0:
+        raise ValueError(f"Split is too small: n={n}, train={n_train}, val={n_val}, test={n_test}")
+    return (
+        df.iloc[:n_train].copy(),
+        df.iloc[n_train : n_train + n_val].copy(),
+        df.iloc[n_train + n_val :].copy(),
     )
 
 
-def main() -> None:
-    feats = pd.read_parquet(FEATURES_PATH)
-    regs = pd.read_parquet(REGIMES_PATH)
+def _finite_nunique(values: np.ndarray) -> int:
+    finite = values[np.isfinite(values)]
+    return int(np.unique(finite).size) if finite.size else 0
 
-    # Consistently resolve return col from features schema (prefer _x over _y)
-    resolved_return = _resolve_col(feats, RETURN_COL)
-    if resolved_return != RETURN_COL:
-        print(f"Resolved return col: {RETURN_COL} -> {resolved_return}")
 
-    # Lock to the canonical feature set (prevents drift)
-    feature_cols = _resolve_pair_feature_cols(feats)
+def _metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    return {
+        "mae": float(mean_absolute_error(y_true, y_pred)),
+        "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+    }
 
-    # Merge with explicit suffixes to avoid losing/resuffixing feature columns
-    df = feats.merge(regs, on=TIMESTAMP_COL, how="inner", suffixes=("_feat", "_reg"))
 
-    # Resolve again on the merged frame in case merge introduced suffix collisions
-    resolved_return_df = _resolve_col(df, RETURN_COL)
-    if resolved_return_df != resolved_return:
-        print(f"Resolved return col after merge: {resolved_return} -> {resolved_return_df}")
+def _zero_return_quality_gate(
+    y_val: np.ndarray,
+    val_pred: np.ndarray,
+    y_test: np.ndarray,
+    test_pred: np.ndarray,
+) -> dict[str, Any]:
+    val_rmse = float(np.sqrt(mean_squared_error(y_val, val_pred)))
+    test_rmse = float(np.sqrt(mean_squared_error(y_test, test_pred)))
+    zero_return_val_rmse = float(np.sqrt(np.mean(np.square(y_val))))
+    zero_return_test_rmse = float(np.sqrt(np.mean(np.square(y_test))))
+    reasons: list[str] = []
+    if val_rmse > zero_return_val_rmse:
+        reasons.append("validation_rmse_exceeds_zero_return_baseline")
+    if test_rmse > zero_return_test_rmse:
+        reasons.append("test_rmse_exceeds_zero_return_baseline")
+    return {
+        "promotion_eligible": not reasons,
+        "val_rmse": val_rmse,
+        "zero_return_val_rmse": zero_return_val_rmse,
+        "test_rmse": test_rmse,
+        "zero_return_test_rmse": zero_return_test_rmse,
+        "reason": "; ".join(reasons) if reasons else None,
+        "reasons": reasons,
+    }
 
-    df = df.sort_values(TIMESTAMP_COL).reset_index(drop=True)
-    df[TARGET_COL] = df[resolved_return_df].shift(-1)
-    df = df.dropna(subset=[TARGET_COL]).reset_index(drop=True)
 
-    # Expert is trained only on bullish regime rows (example)
-    if "regime" not in df.columns:
-        # If the merge applied suffixes because regs had a regime column name collision,
-        # try a best-effort fallback.
-        if "regime_reg" in df.columns:
-            df = df.rename(columns={"regime_reg": "regime"})
-        elif "regime_feat" in df.columns:
-            df = df.rename(columns={"regime_feat": "regime"})
-        else:
-            raise KeyError(f"'regime' column missing after merge. cols={list(df.columns)}")
+def _target_summary(values: pd.Series) -> dict[str, float]:
+    numeric = pd.to_numeric(values, errors="coerce")
+    finite = numeric[np.isfinite(numeric)]
+    if len(finite) == 0:
+        raise ValueError("Expert target has no finite values.")
+    quantiles = finite.quantile([0.01, 0.5, 0.99])
+    return {
+        "mean": float(finite.mean()),
+        "std": float(finite.std(ddof=0)),
+        "min": float(finite.min()),
+        "p01": float(quantiles.loc[0.01]),
+        "p50": float(quantiles.loc[0.5]),
+        "p99": float(quantiles.loc[0.99]),
+        "max": float(finite.max()),
+    }
 
-    expert_df = df[df["regime"] == "bullish"].copy()
-    min_rows = 10  # set to 2-10 for dev smoke tests, raise later for real training
-    if len(expert_df) < min_rows:
-        print(
-            f"WARNING: bullish expert has only {len(expert_df)} rows, min_rows={min_rows}. "
-            "Training anyway for a smoke test."
+
+def _runtime_versions() -> dict[str, str]:
+    return {
+        "python": platform.python_version(),
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
+        "scikit_learn": sklearn.__version__,
+        "joblib": joblib.__version__,
+    }
+
+
+def _atomic_joblib_dump(payload: Any, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    joblib.dump(payload, tmp_path)
+    tmp_path.replace(path)
+
+
+def _atomic_write_json(payload: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def prepare_training_frame(cfg: TrainConfig) -> tuple[pd.DataFrame, str]:
+    """Build next-period targets before filtering labels to preserve the stated horizon."""
+    if not cfg.features_path.exists():
+        raise FileNotFoundError(f"Features path not found: {cfg.features_path}")
+    if cfg.regime.strip().lower() not in REGIMES:
+        raise ValueError(f"Unknown regime '{cfg.regime}'. Expected one of {sorted(REGIMES)}")
+
+    features = pd.read_parquet(cfg.features_path)
+    resolved_return = _resolve_col(features, cfg.return_col)
+    df = _load_regime_labels(features, cfg)
+    df = df.sort_values("timestamp").reset_index(drop=True)
+    df[cfg.target_col] = df[resolved_return].shift(cfg.target_shift)
+    target_numeric = pd.to_numeric(df[cfg.target_col], errors="coerce")
+    df = df.loc[np.isfinite(target_numeric)].reset_index(drop=True)
+
+    normalized = df["regime"].astype("string").str.strip().str.lower()
+    return df.loc[normalized == cfg.regime.strip().lower()].reset_index(drop=True), resolved_return
+
+
+def run(cfg: TrainConfig) -> Path:
+    """Write a versioned candidate and publish only when explicitly requested."""
+    if cfg.min_regime_rows <= 0:
+        raise ValueError("min_regime_rows must be >= 1")
+    if cfg.min_train_rows < 2:
+        raise ValueError("min_train_rows must be >= 2")
+    if cfg.min_test_rows < 1:
+        raise ValueError("min_test_rows must be >= 1")
+    if cfg.publish and cfg.publish_dir is None:
+        raise ValueError("publish_dir must be set when publish=True")
+
+    expert_df, resolved_return = prepare_training_frame(cfg)
+    if len(expert_df) < cfg.min_regime_rows:
+        raise ValueError(
+            f"Not enough rows for pretrained '{cfg.regime}' Ridge expert: "
+            f"{len(expert_df)} < {cfg.min_regime_rows}. No artifact was written."
         )
-        if len(expert_df) < 2:
-            raise ValueError(f"Not enough rows to fit a model at all, got {len(expert_df)}")
 
-    # If merge introduced suffix collisions on feature columns, prefer the feature-side versions.
-    # We keep your canonical list but map to existing columns in df.
-    mapped_feature_cols: list[str] = []
-    for c in feature_cols:
-        if c in df.columns:
-            mapped_feature_cols.append(c)
-            continue
-        if f"{c}_feat" in df.columns:
-            mapped_feature_cols.append(f"{c}_feat")
-            continue
-        if f"{c}_reg" in df.columns:
-            mapped_feature_cols.append(f"{c}_reg")
-            continue
-        raise KeyError(
-            f"Expected feature column '{c}' not found after merge. cols={list(df.columns)}"
+    train_df, val_df, test_df = _time_split(
+        expert_df, cfg.train_frac, cfg.val_frac, cfg.test_frac
+    )
+    if len(train_df) < cfg.min_train_rows:
+        raise ValueError(
+            f"Ridge expert training split has {len(train_df)} rows, below "
+            f"min_train_rows={cfg.min_train_rows}. No artifact was written."
+        )
+    if len(test_df) < cfg.min_test_rows:
+        raise ValueError(
+            f"Ridge expert test split has {len(test_df)} rows, below "
+            f"min_test_rows={cfg.min_test_rows}. No artifact was written."
         )
 
-    X = expert_df[mapped_feature_cols].to_numpy()
-    y = expert_df[TARGET_COL].to_numpy()
+    excluded = {"timestamp", "symbol", "regime", "regime_explanation", cfg.target_col}
+    feature_cols = [
+        column
+        for column in expert_df.columns
+        if column not in excluded and pd.api.types.is_numeric_dtype(expert_df[column])
+    ]
+    if not feature_cols:
+        raise ValueError("No numeric features remain after excluding labels and target.")
 
-    # Imputer makes it robust to NaNs from rolling features, etc.
     model: Pipeline = Pipeline(
         steps=[
             ("imputer", SimpleImputer(strategy="median")),
-            ("ridge", Ridge(alpha=1.0, random_state=42)),
+            ("ridge", Ridge(alpha=cfg.ridge_alpha, random_state=42)),
         ]
     )
-    model.fit(X, y)
+    model.fit(train_df[feature_cols].to_numpy(), train_df[cfg.target_col].to_numpy())
+    val_pred = model.predict(val_df[feature_cols].to_numpy())
+    test_pred = model.predict(test_df[feature_cols].to_numpy())
+    val_pred_nunique = _finite_nunique(np.asarray(val_pred, dtype=float))
+    test_pred_nunique = _finite_nunique(np.asarray(test_pred, dtype=float))
+    if val_pred_nunique <= 1 or test_pred_nunique <= 1:
+        raise ValueError(
+            "Refusing to save Ridge candidate because predictions collapsed to a constant "
+            f"(val={val_pred_nunique}, test={test_pred_nunique})."
+        )
 
-    out_dir = Path("models/pretrained")
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / "expert_bullish_ridge_v0.joblib"
+    quality_gate = _zero_return_quality_gate(
+        val_df[cfg.target_col].to_numpy(dtype=float),
+        np.asarray(val_pred, dtype=float),
+        test_df[cfg.target_col].to_numpy(dtype=float), np.asarray(test_pred, dtype=float)
+    )
+    promotion_eligible = bool(quality_gate["promotion_eligible"])
 
+    run_ts = time.time_ns()
+    versioned_name = f"{cfg.model_name}_{run_ts}"
     artifact: dict[str, Any] = {
+        "artifact_contract_version": 2,
+        "candidate_only": not (cfg.publish and promotion_eligible),
+        "promotion_eligible": promotion_eligible,
+        "quality_gate": quality_gate,
         "model": model,
-        "feature_cols": mapped_feature_cols,
-        "target_col": TARGET_COL,
-        "timestamp_col": TIMESTAMP_COL,
-        "return_col": RETURN_COL,
-        "resolved_return_col": resolved_return_df,
-        "regime": "bullish",
-        "model_name": "expert_bullish_ridge_v0",
-        "notes": "pretrained expert trained on bullish rows only, stored as frozen artifact",
+        "feature_cols": feature_cols,
+        "target_col": cfg.target_col,
+        "timestamp_col": "timestamp",
+        "return_col": cfg.return_col,
+        "resolved_return_col": resolved_return,
+        "regime": cfg.regime.strip().lower(),
+        "model_name": versioned_name,
+        "training_regime": cfg.regime.strip().lower(),
+        "regime_filter_applied": True,
+        "target_alignment": "current_features_to_next_period_target"
+        if cfg.target_shift == -1
+        else "configured_target_shift",
+        "runtime_versions": _runtime_versions(),
+    }
+    metadata: dict[str, Any] = {
+        "artifact_contract_version": 2,
+        "model_type": "ridge",
+        "candidate_only": not (cfg.publish and promotion_eligible),
+        "publish_requested": cfg.publish,
+        "promotion_eligible": promotion_eligible,
+        "model_name": versioned_name,
+        "features_path": str(cfg.features_path),
+        "regimes_path": str(cfg.regimes_path),
+        "regime": cfg.regime.strip().lower(),
+        "training_regime": cfg.regime.strip().lower(),
+        "regime_filter_applied": True,
+        "target_col": cfg.target_col,
+        "target_shift": cfg.target_shift,
+        "target_alignment": artifact["target_alignment"],
+        "resolved_return_col": resolved_return,
+        "feature_cols": feature_cols,
         "n_rows_used": int(len(expert_df)),
+        "n_train": int(len(train_df)),
+        "n_val": int(len(val_df)),
+        "n_test": int(len(test_df)),
+        "target_summary": _target_summary(expert_df[cfg.target_col]),
+        "val_metrics": _metrics(val_df[cfg.target_col].to_numpy(), val_pred),
+        "test_metrics": _metrics(test_df[cfg.target_col].to_numpy(), test_pred),
+        "quality_gate": quality_gate,
+        "val_pred_nunique": val_pred_nunique,
+        "test_pred_nunique": test_pred_nunique,
+        "params": {"ridge_alpha": cfg.ridge_alpha},
+        "runtime_versions": _runtime_versions(),
+        "created_at_unix_ns": run_ts,
     }
 
-    joblib.dump(artifact, out_path)
+    candidate_path = cfg.output_dir / f"{versioned_name}.joblib"
+    metadata_path = cfg.output_dir / f"{versioned_name}.json"
+    _atomic_joblib_dump(artifact, candidate_path)
+    _atomic_write_json(metadata, metadata_path)
 
-    print("Wrote pretrained expert:", out_path)
-    print("Rows used:", len(expert_df))
-    print("Feature cols:", mapped_feature_cols)
+    if cfg.publish and promotion_eligible:
+        assert cfg.publish_dir is not None  # narrowed above; keeps the destination explicit
+        publish_name = cfg.publish_name or cfg.model_name
+        _atomic_joblib_dump(artifact, cfg.publish_dir / f"{publish_name}.joblib")
+        _atomic_write_json(metadata, cfg.publish_dir / f"{publish_name}.metadata.json")
+
+    print("Wrote validated pretrained candidate:", candidate_path)
+    if cfg.publish and promotion_eligible:
+        print("Published pretrained artifact under:", cfg.publish_dir)
+    if cfg.publish and not promotion_eligible:
+        raise ValueError(
+            "Ridge candidate failed the zero-return test gate; no publish destination was changed. "
+            f"model_rmse={quality_gate['test_rmse']:.8f} "
+            f"zero_return_rmse={quality_gate['zero_return_test_rmse']:.8f}"
+        )
+    return candidate_path
+
+
+def main() -> None:
+    run(_parse_args())
 
 
 if __name__ == "__main__":

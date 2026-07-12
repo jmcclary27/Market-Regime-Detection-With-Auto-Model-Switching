@@ -17,6 +17,12 @@ import pandas as pd
 from src.config.load_config import load_config
 from src.ingestion.quality import audit_raw_bars, default_audit_output
 from src.monitoring import metrics as m
+from src.monitoring.drift import (
+    build_drift_snapshot,
+    default_drift_output,
+    default_latest_drift_output,
+    write_drift_snapshot,
+)
 from src.monitoring.replay_audit import (
     build_replay_audit,
     default_replay_output,
@@ -208,6 +214,7 @@ def run_pipeline(
     regimes_parquet: Path | None = None
     predictions_parquet: Path | None = None
     data_quality_audit_json: Path | None = None
+    drift_snapshot_json: Path | None = None
     pipeline_run_json: Path | None = None
     wf_portfolio_metrics_parquet: Path | None = None
     promotion_decision_json: Path | None = None
@@ -239,6 +246,8 @@ def run_pipeline(
         }
         if data_quality_audit_json is not None and data_quality_audit_json.exists():
             artifacts["data_quality_audit_json"] = data_quality_audit_json
+        if drift_snapshot_json is not None and drift_snapshot_json.exists():
+            artifacts["drift_snapshot_json"] = drift_snapshot_json
         if wf_portfolio_metrics_parquet is not None and wf_portfolio_metrics_parquet.exists():
             artifacts["walkforward_portfolio_metrics_parquet"] = wf_portfolio_metrics_parquet
         if promotion_decision_json is not None and promotion_decision_json.exists():
@@ -266,7 +275,7 @@ def run_pipeline(
         except Exception:
             LOG.exception("Lineage MLflow logging failed")
 
-        return out
+        return cast(Path, out)
 
     run_status = "completed"
     run_error: str | None = None
@@ -294,6 +303,8 @@ def run_pipeline(
                 write_latest=not replay,
             )
             if replay:
+                assert features_parquet is not None
+                assert features_manifest is not None
                 replay_artifacts["features_parquet"] = features_parquet
                 replay_artifacts["features_manifest"] = features_manifest
 
@@ -344,6 +355,7 @@ def run_pipeline(
                 write_latest=not replay,
             )
             if replay:
+                assert regimes_parquet is not None
                 replay_artifacts["regimes_parquet"] = regimes_parquet
 
         step("regimes", _regimes, recorder=recorder)
@@ -413,6 +425,38 @@ def run_pipeline(
                 replay_artifacts["predictions_parquet"] = predictions_parquet
 
         step("predict", _predict, recorder=recorder)
+
+        if not replay:
+
+            def _drift() -> None:
+                nonlocal drift_snapshot_json
+                if features_parquet is None:
+                    raise RuntimeError("features_parquet not set")
+                if regimes_parquet is None:
+                    raise RuntimeError("regimes_parquet not set")
+                if predictions_parquet is None:
+                    raise RuntimeError("predictions_parquet not set")
+
+                snapshot = build_drift_snapshot(
+                    project_root=cfg.project_root,
+                    run_ts=cfg.run_ts,
+                    current_features_path=features_parquet,
+                    current_regimes_path=regimes_parquet,
+                    current_predictions_path=predictions_parquet,
+                )
+                drift_snapshot_json = write_drift_snapshot(
+                    default_drift_output(cfg.project_root, cfg.run_ts),
+                    snapshot,
+                    latest_path=default_latest_drift_output(cfg.project_root),
+                )
+                LOG.info(
+                    "Drift snapshot written: %s (status=%s action=%s)",
+                    drift_snapshot_json,
+                    snapshot["status"],
+                    snapshot["action"],
+                )
+
+            step("drift", _drift, recorder=recorder)
 
         if replay:
             LOG.info("Replay enabled, skipping lineage step")
@@ -636,6 +680,9 @@ def run_pipeline(
                 "predictions_parquet": str(predictions_parquet) if predictions_parquet is not None else None,
                 "data_quality_audit_json": str(data_quality_audit_json)
                 if data_quality_audit_json is not None
+                else None,
+                "drift_snapshot_json": str(drift_snapshot_json)
+                if drift_snapshot_json is not None
                 else None,
                 "walkforward_portfolio_metrics_parquet": str(wf_portfolio_metrics_parquet)
                 if wf_portfolio_metrics_parquet is not None

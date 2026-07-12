@@ -35,6 +35,9 @@ def test_batch_predict_writes_predictions(tmp_path: Path) -> None:
         models_dir=tmp_path / "models",
         output_dir=tmp_path / "data" / "predictions",
         runs_dir=tmp_path / "data" / "runs",
+        require_published_model_contract=False,
+        # This fixture predicts arbitrary test values rather than returns.
+        max_abs_prediction=10.0,
     )
     out_path = run(config)
 

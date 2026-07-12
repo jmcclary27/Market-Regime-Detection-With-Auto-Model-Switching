@@ -21,6 +21,12 @@ from src.ingestion.fetch_market_data import fetch_market_data
 from src.ingestion.quality import audit_raw_bars, default_audit_output
 from src.regimes.run_regime_detection import run as run_regimes
 from src.trading.execution import ExecutionConfig, execute_signal, log_trade
+from src.trading.live_sim_shared import (
+    ActivePrediction,
+    is_live_eligible_prediction,
+    load_loop_state,
+    save_loop_state,
+)
 from src.trading.signals import SignalConfig, prediction_to_signal
 from src.trading.state import load_account_state, log_account_snapshot, save_account_state
 
@@ -114,16 +120,6 @@ class MarketBar:
 
 
 @dataclass(frozen=True)
-class ActivePrediction:
-    row_id: int
-    prediction: float
-    active_model_id: str
-    model_name: str
-    active_model_type: str | None = None
-    model_path: str | None = None
-
-
-@dataclass(frozen=True)
 class CycleArtifacts:
     raw_path: Path
     features_path: Path
@@ -161,20 +157,6 @@ def atomic_write_parquet(df: pd.DataFrame, path: Path) -> None:
     tmp = path.with_name(f".{path.stem}.{os.getpid()}.tmp.parquet")
     df.to_parquet(tmp, index=False)
     tmp.replace(path)
-
-
-def load_loop_state(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"Loop state must be a JSON object: {path}")
-    return data
-
-
-def save_loop_state(path: Path, state: dict[str, Any]) -> None:
-    state["updated_at_utc"] = datetime.now(UTC).isoformat()
-    atomic_write_json(path, state)
 
 
 def write_heartbeat(
@@ -483,18 +465,6 @@ def active_prediction_for_bar(
         ),
         regime,
     )
-
-
-def is_live_eligible_prediction(active: ActivePrediction) -> bool:
-    model_id = active.active_model_id.lower().strip()
-    if model_id.startswith("expert_arima_"):
-        return False
-
-    model_path = (active.model_path or "").lower().strip()
-    if model_path.endswith(".json"):
-        return False
-
-    return True
 
 
 def regime_matched_lightgbm_prediction_for_bar(

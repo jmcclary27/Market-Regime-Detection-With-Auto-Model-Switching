@@ -1,11 +1,11 @@
 # src/deploy/switcher.py
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-import os
 
 import pandas as pd
 
@@ -54,7 +54,18 @@ def write_active_model_yaml(
         for regime in ("bullish", "bearish", "sideways"):
             if candidate_model_id == f"expert_{regime}" or candidate_model_id.endswith(f"_{regime}"):
                 return regime
+            if candidate_model_id.startswith(f"expert_arima_{regime}_"):
+                return regime
+            if candidate_model_id.startswith(f"expert_lightgbm_{regime}_"):
+                return regime
         return None
+
+    def _arima_metadata_path(candidate_model_id: str, regime: str) -> Path:
+        canonical = Path(f"models/experts/{regime}/arima/{candidate_model_id}.json")
+        legacy = Path(f"models/experts/{regime}/latest.arima.json")
+        if canonical.exists() or candidate_model_id != f"expert_arima_{regime}":
+            return canonical
+        return legacy
 
     regime = _infer_regime(model_id)
     if model_id == "baseline":
@@ -67,13 +78,14 @@ def write_active_model_yaml(
             metadata_path=Path("models/baseline/latest.json"),
         )
     elif model_id.startswith("expert_arima_") and regime is not None:
+        arima_path = _arima_metadata_path(model_id, regime)
         ref = ActiveModelRef(
             model_type="expert",
             model_id=model_id,
             version="0",
-            artifact_path=Path(f"models/experts/{regime}/latest.arima.json"),
+            artifact_path=arima_path,
             regime=regime,
-            metadata_path=None,
+            metadata_path=arima_path,
         )
     elif (
         model_id.startswith("expert_lightgbm_")
@@ -97,7 +109,7 @@ def write_active_model_yaml(
             metadata_path=None,
         )
 
-    return write_active(ref, active_file=registry_path, event_context=event_context)
+    return bool(write_active(ref, active_file=registry_path, event_context=event_context))
 
 
 def infer_model_id_col(df: pd.DataFrame | None) -> str | None:
@@ -484,7 +496,7 @@ def run_switcher(
         for maybe_regime in ("bullish", "bearish", "sideways"):
             if resolved_candidate_id == f"expert_{maybe_regime}" or resolved_candidate_id.endswith(
                 f"_{maybe_regime}"
-            ):
+            ) or resolved_candidate_id.startswith(f"expert_arima_{maybe_regime}_"):
                 regime = maybe_regime
                 break
 
@@ -494,7 +506,11 @@ def run_switcher(
                 model_id=resolved_candidate_id,
                 version="0",
                 artifact_path=(
-                    Path(f"models/experts/{regime}/latest.joblib")
+                    (
+                        Path(f"models/experts/{regime}/arima/{resolved_candidate_id}.json")
+                        if resolved_candidate_id.startswith("expert_arima_") and regime is not None
+                        else Path(f"models/experts/{regime}/latest.joblib")
+                    )
                     if candidate_type == "expert" and regime is not None
                     else Path(f"models/pretrained/{resolved_candidate_id}.joblib")
                     if candidate_type == "pretrained"
@@ -502,10 +518,17 @@ def run_switcher(
                 ),
                 regime=regime,
                 metadata_path=(
-                    project_root / "models" / "experts" / regime / "latest.json"
-                    if regime is not None
-                    and candidate_type == "expert"
-                    and not resolved_candidate_id.startswith("expert_arima_")
+                    (
+                        project_root
+                        / "models"
+                        / "experts"
+                        / regime
+                        / "arima"
+                        / f"{resolved_candidate_id}.json"
+                        if resolved_candidate_id.startswith("expert_arima_")
+                        else project_root / "models" / "experts" / regime / "latest.json"
+                    )
+                    if regime is not None and candidate_type == "expert"
                     else None
                 ),
             ),

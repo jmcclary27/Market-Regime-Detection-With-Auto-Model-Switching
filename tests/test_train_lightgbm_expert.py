@@ -85,6 +85,7 @@ def test_train_lightgbm_experts_are_regime_specific_and_non_constant(tmp_path: P
             experiment_name="test-market-regime",
             run_name=f"test_{regime}",
             output_dir=str(output_dir),
+            publish_latest=True,
             id_cols=["timestamp"],
             drop_cols=["regime", "regime_explanation"],
             time_col="timestamp",
@@ -94,6 +95,9 @@ def test_train_lightgbm_experts_are_regime_specific_and_non_constant(tmp_path: P
             early_stopping_rounds=20,
             num_boost_round=200,
             seed=42,
+            min_prediction_unique_ratio=0.05,
+            min_prediction_std_ratio=0.01,
+            min_validation_rmse_improvement=0.0,
             params_json=None,
             mlflow_tracking_uri=tracking_uri,
         )
@@ -121,3 +125,50 @@ def test_train_lightgbm_experts_are_regime_specific_and_non_constant(tmp_path: P
         hashes[regime] = _model_hash(latest_dir / "latest.joblib")
 
     assert len(set(hashes.values())) == 3
+
+
+def test_lightgbm_candidate_does_not_update_latest_without_explicit_publish(tmp_path: Path) -> None:
+    features_path = tmp_path / "data" / "regimes" / "latest.parquet"
+    features_path.parent.mkdir(parents=True, exist_ok=True)
+    _build_regime_labeled_fixture(features_path)
+
+    output_dir = tmp_path / "models" / "candidates" / "lightgbm"
+    out_dir = run(
+        TrainConfig(
+            features_path=str(features_path),
+            regimes_path=None,
+            target_col="log_return_1_x",
+            target_expr=None,
+            target_shift=-1,
+            group_col=None,
+            vol_window=None,
+            min_regime_rows=100,
+            regime="bullish",
+            model_name="lightgbm_expert",
+            experiment_name="candidate-lightgbm-test",
+            run_name="candidate_bullish",
+            output_dir=str(output_dir),
+            publish_latest=False,
+            id_cols=["timestamp"],
+            drop_cols=["regime", "regime_explanation"],
+            time_col="timestamp",
+            train_frac=0.70,
+            val_frac=0.15,
+            test_frac=0.15,
+            early_stopping_rounds=20,
+            num_boost_round=100,
+            seed=42,
+            min_prediction_unique_ratio=0.05,
+            min_prediction_std_ratio=0.01,
+            min_validation_rmse_improvement=0.0,
+            params_json=None,
+            mlflow_tracking_uri=(tmp_path / "mlruns").resolve().as_uri(),
+        )
+    )
+
+    metadata = json.loads((out_dir / "metadata.json").read_text(encoding="utf-8"))
+    assert metadata["candidate_only"] is True
+    assert "quality_gate" in metadata
+    assert "zero_return_test_rmse" in metadata["quality_gate"]
+    assert not (output_dir / "bullish" / "latest.joblib").exists()
+    assert not (output_dir / "bullish" / "latest.json").exists()

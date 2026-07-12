@@ -424,7 +424,7 @@ def test_missing_active_prediction_records_hold_without_pending(
     assert "No active prediction found" in heartbeat["decision_reason"]
 
 
-def test_non_live_eligible_active_model_records_hold_without_pending(
+def test_validated_arima_active_model_is_live_eligible(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = _cfg(tmp_path)
@@ -472,10 +472,10 @@ def test_non_live_eligible_active_model_records_hold_without_pending(
     result = run_once(cfg, now=datetime(2026, 5, 18, 14, 11, 0, tzinfo=UTC))
 
     assert result["status"] == "ok"
-    assert result["signal"] == "HOLD"
-    assert result["pending_signal"] is None
+    assert result["signal"] == "BUY"
+    assert result["pending_signal"] is not None
     assert result["selected_model_id"] == "expert_arima_bullish"
-    assert "not live-eligible" in result["decision_reason"]
+    assert result["decision_reason"] == "created pending signal for next candle open"
 
 
 def test_close_time_signal_is_not_queued(tmp_path: Path) -> None:

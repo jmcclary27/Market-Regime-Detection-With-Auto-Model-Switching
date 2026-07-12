@@ -91,6 +91,58 @@ python tools/make_pretrained_expert.py
 python -m src.models.train
 ```
 
+### Safe retraining candidates
+
+Baseline, Ridge-expert, and ARIMA retraining now write versioned artifacts under
+`models/candidates/` by default. Candidate directories are not discovered by
+inference and do not update the registry or a `latest` pointer. Review their
+metadata and evaluation results before an explicit publish step.
+
+```bash
+# Global baseline candidate (next-period decimal log-return target)
+python -m src.models.train \
+  --features-path data/features/latest.parquet \
+  --output-dir models/candidates/baseline
+
+# Regime-specific Ridge candidate
+python tools/make_pretrained_expert.py \
+  --features-path data/features/latest.parquet \
+  --regimes-path data/regimes/latest.parquet \
+  --regime bullish \
+  --output-dir models/candidates/pretrained
+
+# All available LightGBM regime candidates (skips regimes without enough labels)
+python tools/retrain_lightgbm_experts.py \
+  --features-path data/regimes/latest.parquet \
+  --output-dir models/candidates/lightgbm
+
+# Regime-specific ARIMA candidate
+python tools/train_arima_expert.py \
+  --features-path data/features/latest.parquet \
+  --regimes-path data/regimes/latest.parquet \
+  --target-col log_return_1_x \
+  --target-shift -1 \
+  --regime bullish \
+  --model-name arima_p1d0q1 \
+  --output-dir models/candidates/arima
+```
+
+The ARIMA trainer filters the full, time-ordered target frame by the requested
+regime only after creating the next-period target. This preserves the one-period
+forecast horizon and records `regime_filter_applied: true` in its metadata.
+It assigns a stable ID such as `expert_arima_bullish_arima_p1d0q1`, so multiple
+ARIMA experts can coexist for one regime. An explicit publish writes canonical
+metadata to `models/experts/<regime>/arima/<model_id>.json`; it does not alter
+the legacy single-expert `latest.arima.json` unless `--update-legacy-pointer` is
+also supplied.
+All trainers reject undersized data and write runtime dependency versions to
+their artifacts. Constant, low-diversity, or weak candidates are retained only
+for diagnosis and cannot publish a live pointer. Ridge, ARIMA, and LightGBM
+candidates also record a zero-return test baseline; candidates whose test RMSE
+exceeds it cannot publish. LightGBM additionally requires sufficient prediction
+diversity and validation RMSE improvement over a train-mean baseline before an
+explicit publish is allowed.
+
 ## Batch Inference & Shadow Predictions
 
 This project supports **batch inference across all available models** (baseline, regime experts, and pretrained models) to produce **shadow predictions** for comparison and monitoring.

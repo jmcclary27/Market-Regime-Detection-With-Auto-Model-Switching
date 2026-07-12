@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 import joblib
 import numpy as np
 import pandas as pd
+import sklearn
 from hmmlearn.hmm import GaussianHMM
 from sklearn.preprocessing import StandardScaler
 
@@ -21,6 +23,7 @@ class TrainHMMConfig:
     n_states: int
     covariance_type: str
     seed: int
+    min_state_fraction: float
 
     time_col: str
     output_dir: str
@@ -45,12 +48,24 @@ def _parse_args() -> TrainHMMConfig:
         help="Gaussian covariance type.",
     )
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--min-state-fraction",
+        type=float,
+        default=0.01,
+        help=(
+            "Minimum fraction of valid training rows assigned to every hidden state. "
+            "Rejects collapsed regime models."
+        ),
+    )
 
     p.add_argument("--time-col", default="timestamp", help="Time column for ordering.")
     p.add_argument("--output-dir", default="models/regimes/hmm", help="Local output folder.")
     p.add_argument("--run-name", default="", help="Optional run name. Defaults to timestamp.")
 
     args = p.parse_args()
+
+    if not 0.0 < float(args.min_state_fraction) < 1.0:
+        raise ValueError("--min-state-fraction must be between 0 and 1")
 
     run_name = args.run_name.strip()
     if not run_name:
@@ -62,6 +77,7 @@ def _parse_args() -> TrainHMMConfig:
         n_states=args.n_states,
         covariance_type=args.covariance_type,
         seed=args.seed,
+        min_state_fraction=float(args.min_state_fraction),
         time_col=args.time_col,
         output_dir=args.output_dir,
         run_name=run_name,
@@ -129,13 +145,50 @@ def _build_observations(df: pd.DataFrame, mode: str) -> tuple[pd.DataFrame, list
     raise ValueError(f"Unsupported obs_mode: {mode}")
 
 
+def _initial_hmm_means(Xz: np.ndarray, n_states: int) -> np.ndarray:
+    """Deterministic spread-out HMM means without sklearn KMeans initialization."""
+    if len(Xz) < n_states:
+        raise ValueError(f"Need at least n_states rows for HMM initialization, got {len(Xz)}")
+
+    # The first standardized observation is the primary market return.  Its
+    # quantiles give stable, diverse starting states without invoking KMeans,
+    # which is fragile in constrained Windows/BLAS environments.
+    order = np.argsort(Xz[:, 0], kind="mergesort")
+    positions = np.linspace(0, len(order) - 1, num=n_states, dtype=int)
+    return np.asarray(Xz[order[positions]], dtype=np.float64)
+
+
+def _initial_hmm_covariances(Xz: np.ndarray, cfg: TrainHMMConfig) -> np.ndarray:
+    n_features = int(Xz.shape[1])
+    full_cov = np.cov(Xz, rowvar=False, bias=True)
+    full_cov = np.asarray(full_cov, dtype=np.float64).reshape(n_features, n_features)
+    full_cov = full_cov + (np.eye(n_features, dtype=np.float64) * 1e-6)
+
+    if cfg.covariance_type == "full":
+        return np.repeat(full_cov[np.newaxis, :, :], cfg.n_states, axis=0)
+    if cfg.covariance_type == "diag":
+        diagonal = np.diag(full_cov)
+        return np.repeat(diagonal[np.newaxis, :], cfg.n_states, axis=0)
+    if cfg.covariance_type == "tied":
+        return full_cov
+    if cfg.covariance_type == "spherical":
+        variance = float(np.mean(np.diag(full_cov)))
+        return np.full(cfg.n_states, variance, dtype=np.float64)
+    raise ValueError(f"Unsupported covariance_type: {cfg.covariance_type}")
+
+
 def _fit_hmm(Xz: np.ndarray, cfg: TrainHMMConfig) -> GaussianHMM:
     model = GaussianHMM(
         n_components=cfg.n_states,
         covariance_type=cfg.covariance_type,
         n_iter=500,
         random_state=cfg.seed,
+        # Avoid hmmlearn's default KMeans initialization.  It can fail in the
+        # local Windows runtime when threadpoolctl cannot inspect BLAS.
+        init_params="st",
     )
+    model.means_ = _initial_hmm_means(Xz, cfg.n_states)
+    model.covars_ = _initial_hmm_covariances(Xz, cfg)
     model.fit(Xz)
     return model
 
@@ -206,6 +259,20 @@ def main() -> None:
     model = _fit_hmm(Xz, cfg)
 
     hidden_states = model.predict(Xz)
+    state_counts = np.bincount(hidden_states.astype(int), minlength=cfg.n_states)
+    state_fractions = state_counts / float(len(hidden_states))
+    missing_states = [int(state) for state, count in enumerate(state_counts) if int(count) == 0]
+    undersized_states = [
+        int(state)
+        for state, fraction in enumerate(state_fractions)
+        if float(fraction) < cfg.min_state_fraction
+    ]
+    if missing_states or undersized_states:
+        raise ValueError(
+            "Refusing to save a collapsed HMM regime model. "
+            f"state_counts={state_counts.tolist()} min_state_fraction={cfg.min_state_fraction} "
+            f"missing_states={missing_states} undersized_states={undersized_states}"
+        )
     state_mapping = _map_states_to_labels(hidden_states, obs_train)
 
     # Training diagnostics for metadata
@@ -248,11 +315,21 @@ def main() -> None:
         "n_states": cfg.n_states,
         "covariance_type": cfg.covariance_type,
         "seed": cfg.seed,
+        "min_state_fraction": cfg.min_state_fraction,
         "n_rows_total": int(len(df)),
         "n_rows_train": int(len(obs_train)),
         "dropped_rows_due_to_nans": int(len(df) - len(obs_train)),
         "per_state_stats": per_state,
         "state_mapping": {str(k): v for k, v in state_mapping.items()},
+        "state_counts": {str(index): int(count) for index, count in enumerate(state_counts)},
+        "state_fractions": {
+            str(index): float(fraction) for index, fraction in enumerate(state_fractions)
+        },
+        "runtime_versions": {
+            "python": platform.python_version(),
+            "numpy": np.__version__,
+            "scikit_learn": sklearn.__version__,
+        },
     }
 
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")

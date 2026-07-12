@@ -1,14 +1,15 @@
 # Machine Learning
 mlflow
-pandas
-pyarrow
+numpy==1.26.4
+pandas==1.5.3
+pyarrow==11.0.0
 pyyaml
-scikit-learn
+scikit-learn==1.3.0
 types-PyYAML
-hmmlearn
-joblib
-lightgbm
-statsmodels>=0.14,<0.15
+hmmlearn==0.3.3
+joblib==1.2.0
+lightgbm==4.6.0
+statsmodels==0.14.0
 
 # Market Dependencies
 yfinance

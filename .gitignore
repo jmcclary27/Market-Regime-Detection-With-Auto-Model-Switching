@@ -58,11 +58,15 @@ data/reporting/
 # Run metadata
 data/runs/
 
+# Drift-monitoring snapshots
+artifacts/drift/
+
 # Deployment / switcher logs
 data/deployments/
 
 # Models (baseline, experts, pretrained copies)
 models/baseline
+models/candidates
 models/experts
 models/pretrained
 models/regimes

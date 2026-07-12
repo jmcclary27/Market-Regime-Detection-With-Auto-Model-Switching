@@ -104,6 +104,7 @@ def test_train_produces_artifacts(tmp_path: Path) -> None:
         baseline_models_dir=models_dir / "baseline",
         tracking_uri=str(tmp_path / "mlruns"),
         experiment_name="test-market-regime-auto-switch",
+        publish_latest=True,
     )
 
     model_path = run(cfg)

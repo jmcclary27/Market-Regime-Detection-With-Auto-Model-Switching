@@ -1,0 +1,12 @@
+# Deliberately exclude training, data-ingestion, tracking, and developer
+# dependencies (MLflow, yfinance, DVC, pytest, Ruff, mypy).  The Lambda only
+# runs already-published artifacts and the paper execution runtime.
+# The AWS Lambda Python base image supplies boto3; do not add credentials here.
+numpy==1.26.4
+pandas==1.5.3
+pyarrow==11.0.0
+PyYAML
+scikit-learn==1.3.0
+joblib==1.2.0
+lightgbm==4.6.0
+statsmodels==0.14.0

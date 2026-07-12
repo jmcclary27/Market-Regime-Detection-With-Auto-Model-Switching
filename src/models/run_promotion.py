@@ -27,12 +27,25 @@ LOG = logging.getLogger("promotion")
 
 LINEAGE_LATEST = Path("artifacts/lineage/latest.json")
 
-NON_PROMOTABLE_MODEL_RULES = ("active", "expert_arima_*")
+NON_PROMOTABLE_MODEL_RULES = ("active",)
 
 
 def is_non_promotable_model(model_name: str) -> bool:
     name = str(model_name).strip()
-    return name == "active" or name.startswith("expert_arima_")
+    return name == "active"
+
+
+def _infer_expert_regime(model_name: str) -> str | None:
+    """Infer a regime from legacy and multi-expert model identifiers."""
+    name = str(model_name).strip().lower()
+    for regime in ("bullish", "bearish", "sideways"):
+        if name == f"expert_{regime}" or name.endswith(f"_{regime}"):
+            return regime
+        if name.startswith(f"expert_arima_{regime}_"):
+            return regime
+        if name.startswith(f"expert_lightgbm_{regime}_"):
+            return regime
+    return None
 
 
 def _raise_if_non_promotable(preferred: str | None, *, role: str) -> None:
@@ -144,22 +157,21 @@ def _resolve_ref_from_predictions(model_name: str, predictions_path: Path) -> Ac
     if model_source not in {"baseline", "expert", "pretrained"}:
         raise ValueError(f"Unknown model_source '{model_source}' for model '{model_name}'")
 
-    # Optional: infer regime from your model_name conventions for expert models
+    # Infer metadata paths from the actual published artifact, rather than an
+    # ambiguous single "latest" convention.
     regime: str | None = None
     metadata_path: Path | None = None
     if model_source == "expert":
-        # expected forms:
-        #   expert_lightgbm_<regime>
-        #   expert_arima_<regime>
-        #   expert_<regime>  (legacy alias)
-        for maybe_regime in ("bullish", "bearish", "sideways"):
-            if model_name == f"expert_{maybe_regime}" or model_name.endswith(
-                f"_{maybe_regime}"
-            ):
-                regime = maybe_regime
-                break
-        if regime is not None and not model_name.startswith("expert_arima_"):
-            metadata_path = Path(f"models/experts/{regime}/latest.json")
+        regime = _infer_expert_regime(model_name)
+        metadata_path = model_path if model_path.suffix.lower() == ".json" else None
+        if metadata_path is None and regime is not None:
+            metadata_path = model_path.parent / "latest.json"
+    elif model_source == "baseline":
+        candidate_meta = model_path.with_suffix(".json")
+        metadata_path = candidate_meta if candidate_meta.exists() else model_path.parent / "latest.json"
+    elif model_source == "pretrained":
+        candidate_meta = model_path.with_suffix(".json")
+        metadata_path = candidate_meta if candidate_meta.exists() else None
 
     return ActiveModelRef(
         model_type=model_source,  # baseline | expert | pretrained

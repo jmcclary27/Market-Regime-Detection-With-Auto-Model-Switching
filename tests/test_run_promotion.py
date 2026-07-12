@@ -5,10 +5,9 @@ import os
 from pathlib import Path
 
 import pandas as pd
-import pytest
 
 from src.features.stationary import augment_pairwise_stationary_features, summarize_feature_ranges
-from src.models.run_promotion import run_promotion
+from src.models.run_promotion import is_non_promotable_model, run_promotion
 from src.registry.registry import ActiveModelRef
 
 
@@ -103,39 +102,17 @@ def _write_expert_guard_inputs(
     return features_path
 
 
-def test_run_promotion_rejects_explicit_arima_challenger(tmp_path: Path) -> None:
-    run_ts = "20260101_000000Z"
-    wf = pd.DataFrame(
-        {
-            "model_name": ["baseline", "expert_arima_bullish"],
-            "fold_id": [0, 0],
-            "sharpe": [0.5, 1.5],
-            "max_drawdown": [-0.2, -0.1],
-        }
-    )
-    _write_promotion_inputs(tmp_path, run_ts=run_ts, wf=wf)
-
-    old_cwd = os.getcwd()
-    os.chdir(tmp_path)
-    try:
-        with pytest.raises(ValueError, match="non-promotable"):
-            run_promotion(
-                challenger_model_name="expert_arima_bullish",
-                incumbent_model_name="baseline",
-                challenger_ref=_dummy_ref(),
-                write_pointer=False,
-            )
-    finally:
-        os.chdir(old_cwd)
+def test_arima_model_is_promotable_after_quality_validation() -> None:
+    assert not is_non_promotable_model("expert_arima_bullish_arima_v1")
 
 
-def test_run_promotion_auto_selection_ignores_arima_models(tmp_path: Path) -> None:
+def test_run_promotion_auto_selection_can_select_quality_gated_arima(tmp_path: Path) -> None:
     run_ts = "20260101_000000Z"
     wf = pd.DataFrame(
         {
             "model_name": [
                 "baseline",
-                "expert_arima_bullish",
+                "expert_arima_bullish_arima_v1",
                 "expert_lightgbm_bullish",
             ],
             "fold_id": [0, 0, 0],
@@ -148,11 +125,42 @@ def test_run_promotion_auto_selection_ignores_arima_models(tmp_path: Path) -> No
         candidate_model_name="expert_lightgbm_bullish",
         y_pred=[0.01, 0.015, 0.02, 0.018],
     )
+    arima_path = (
+        tmp_path / "models" / "experts" / "bullish" / "arima" / "expert_arima_bullish_arima_v1.json"
+    )
+    arima_path.parent.mkdir(parents=True, exist_ok=True)
+    arima_path.write_text(
+        json.dumps(
+            {
+                "model_type": "arima",
+                "model_id": "expert_arima_bullish_arima_v1",
+                "regime": "bullish",
+                "quality_gate": {"promotion_eligible": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    preds = pd.concat(
+        [
+            pd.read_parquet(tmp_path / "data" / "predictions" / "latest.parquet"),
+            pd.DataFrame(
+                {
+                    "model_name": ["expert_arima_bullish_arima_v1"] * 4,
+                    "model_source": ["expert"] * 4,
+                    "model_path": [str(arima_path)] * 4,
+                    "features_path": [str(features_path)] * 4,
+                    "row_id": [0, 1, 2, 3],
+                    "y_pred": [0.01, 0.015, 0.02, 0.018],
+                }
+            ),
+        ],
+        ignore_index=True,
+    )
     _write_promotion_inputs(
         tmp_path,
         run_ts=run_ts,
         wf=wf,
-        preds=pd.read_parquet(tmp_path / "data" / "predictions" / "latest.parquet"),
+        preds=preds,
         features_path=features_path,
     )
 
@@ -168,10 +176,14 @@ def test_run_promotion_auto_selection_ignores_arima_models(tmp_path: Path) -> No
     finally:
         os.chdir(old_cwd)
 
-    assert out["challenger_model_name"] == "expert_lightgbm_bullish"
+    assert out["challenger_model_name"] == "expert_arima_bullish_arima_v1"
     assert out["promoted"] is True
-    assert out["promotable_models"] == ["baseline", "expert_lightgbm_bullish"]
-    assert "expert_arima_*" in out["non_promotable_models"]
+    assert out["promotable_models"] == [
+        "baseline",
+        "expert_arima_bullish_arima_v1",
+        "expert_lightgbm_bullish",
+    ]
+    assert out["non_promotable_models"] == ["active"]
     assert out["promotion_guard"]["allowed"] is True
 
 

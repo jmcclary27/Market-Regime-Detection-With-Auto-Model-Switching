@@ -1,8 +1,8 @@
 active:
   model_type: expert
   regime: sideways
-  model_id: expert_lightgbm_sideways
-  version: '0'
-  artifact_path: models/experts/sideways/latest.joblib
-  metadata_path: models/experts/sideways/latest.json
-updated_at: '2026-06-22T16:57:49Z'
+  model_id: expert_arima_sideways_arima_v2
+  version: '20260712_220707_524934'
+  artifact_path: models/experts/sideways/arima/expert_arima_sideways_arima_v2.json
+  metadata_path: models/experts/sideways/arima/expert_arima_sideways_arima_v2.json
+updated_at: '2026-07-12T22:10:46Z'

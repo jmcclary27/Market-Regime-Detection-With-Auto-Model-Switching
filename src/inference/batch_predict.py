@@ -25,13 +25,25 @@ class BatchPredictConfig:
     models_dir: Path = Path("models")
     output_dir: Path = Path("data/predictions")
     runs_dir: Path = Path("data/runs")
-    target_col: str = "target"
+    target_col: str = "log_return_1_x"
     active_file: Path | None = None
     inference_ts: int | None = None
     output_name: str | None = None
     latest_name: str | None = "latest.parquet"
     run_meta_name: str | None = None
     record_features_path: str | None = None
+    # The target is a decimal next-period log return.  A 20% single-period
+    # move is deliberately generous, while still rejecting artifacts that
+    # were trained against a different target or feature contract.
+    max_abs_prediction: float = 0.20
+    # Diversity is measured on the newest rows because a historical batch can
+    # contain long out-of-distribution periods for a tree model.
+    prediction_diversity_window: int = 252
+    min_prediction_nunique: int = 3
+    min_prediction_unique_fraction: float = 0.02
+    # Production discovery accepts only explicit, validated publications.
+    # Tests and one-off diagnostics can opt into legacy artifacts deliberately.
+    require_published_model_contract: bool = True
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
@@ -54,6 +66,29 @@ def _json_file_is_arima_meta(path: Path) -> bool:
     return str(payload.get("model_type", "")).lower() == "arima"
 
 
+def _published_metadata(
+    path: Path | None,
+    *,
+    expected_model_type: str | None = None,
+) -> dict[str, Any] | None:
+    """Return a v2, quality-gated production artifact metadata payload."""
+    if path is None or not path.exists():
+        return None
+    try:
+        payload = _load_json_dict(path)
+    except Exception:
+        return None
+    if int(payload.get("artifact_contract_version", 0) or 0) < 2:
+        return None
+    if bool(payload.get("candidate_only", True)) or not bool(payload.get("promotion_eligible")):
+        return None
+    if expected_model_type is not None:
+        actual_type = str(payload.get("model_type", "")).strip().lower()
+        if actual_type != expected_model_type.lower():
+            return None
+    return payload
+
+
 def _walk_forward_arima_predict(
     y: pd.Series,
     *,
@@ -62,18 +97,33 @@ def _walk_forward_arima_predict(
     refit_interval: int,
     train_window: int | None,
     min_train_size: int,
+    history_regimes: pd.Series | None = None,
+    training_regime: str | None = None,
+    include_current_observation: bool = True,
     fallback: float = 0.0,
 ) -> pd.Series:
     """
-    Leakage-safe 1-step predictions for each row i using only y[:i] history.
-    Returns a Series aligned to y.index.
+    Leakage-safe forecasts aligned to the feature row.
 
-    NOTE: This predicts "next step" return aligned to the current row index,
-    meaning pred[i] is the forecast for i (given history up to i-1).
-    That matches your earlier evaluation logic using y_true = log_return_1_x.shift(-1)
-    IF your model was trained with target_shift=-1 and you do NOT shift y here.
+    For a target shifted by -1, the return observed in row ``i`` is known at
+    inference time and is the last observation available when forecasting the
+    target for that row.  ``include_current_observation=True`` therefore
+    avoids the prior one-bar lag.  When ``training_regime`` is supplied, the
+    ARIMA history contains only observations from that training regime; the
+    resulting expert can still be scored as a global shadow model without
+    mixing regime histories.
     """
     y_arr = y.to_numpy(dtype=np.float64)
+    regime_arr: np.ndarray[Any, Any] | None = None
+    normalized_training_regime = (
+        str(training_regime).strip().lower() if training_regime is not None else None
+    )
+    if history_regimes is not None:
+        if len(history_regimes) != len(y_arr):
+            raise ValueError("history_regimes must be aligned to the ARIMA target series")
+        regime_arr = history_regimes.astype("string").str.strip().str.lower().to_numpy()
+    if normalized_training_regime is not None and regime_arr is None:
+        raise ValueError("training_regime requires an aligned regime column for ARIMA inference")
 
     # Fill with fallback first, then overwrite with forecasts when available.
     preds: NDArray[np.float64] = np.full(
@@ -83,64 +133,96 @@ def _walk_forward_arima_predict(
     )
 
     history: list[float] = []
-    last_fit_i = -(10**9)
+    last_fit_history_size = -(10**9)
+    last_result_history_size = 0
     last_result: Any | None = None
 
     for i in range(len(y_arr)):
         yi = float(y_arr[i])
+        row_matches_training_regime = (
+            normalized_training_regime is None
+            or (regime_arr is not None and str(regime_arr[i]) == normalized_training_regime)
+        )
 
-        # predict at i using history up to i-1
-        if i == 0:
+        # A next-period target can use the current observed return.  Invalid
+        # observations are never added to history.
+        if include_current_observation and row_matches_training_regime and np.isfinite(yi):
             history.append(yi)
-            continue
 
         hist_used = history[-train_window:] if (train_window and train_window > 0) else history
-        # Keep only finite history for fitting
         hist_used = [x for x in hist_used if np.isfinite(x)]
 
-        if len(hist_used) < int(min_train_size):
+        if len(hist_used) >= int(min_train_size):
+            need_refit = (
+                (len(history) - last_fit_history_size) >= int(refit_interval)
+                or last_result is None
+            )
+            if need_refit:
+                try:
+                    import warnings
+
+                    from statsmodels.tools.sm_exceptions import ConvergenceWarning
+
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", ConvergenceWarning)
+                        last_result = ARIMA(
+                            np.asarray(hist_used, dtype=np.float64), order=order, trend=trend
+                        ).fit()
+                        last_fit_history_size = len(history)
+                        last_result_history_size = len(history)
+                except Exception:
+                    last_result = None
+
+            # Forecast results are stateful.  Without appending intervening
+            # realized observations, every row between refits receives the
+            # same one-step forecast.  Keep the fitted state current while
+            # preserving the bounded rolling-window reset at the next refit.
+            if last_result is not None and len(history) > last_result_history_size:
+                try:
+                    additions = np.asarray(
+                        history[last_result_history_size:], dtype=np.float64
+                    )
+                    last_result = last_result.append(additions, refit=False)
+                    last_result_history_size = len(history)
+                except Exception:
+                    last_result = None
+
+            if last_result is not None:
+                try:
+                    fc = last_result.forecast(steps=1)
+                    val = float(fc[0])
+                    if np.isfinite(val):
+                        preds[i] = np.float64(val)
+                except Exception:
+                    last_result = None
+
+        if not include_current_observation and row_matches_training_regime and np.isfinite(yi):
             history.append(yi)
-            continue
-
-        need_refit = (i - last_fit_i) >= int(refit_interval) or last_result is None
-        if need_refit:
-            try:
-                import warnings
-
-                from statsmodels.tools.sm_exceptions import ConvergenceWarning
-
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", ConvergenceWarning)
-                    last_result = ARIMA(
-                        np.asarray(hist_used, dtype=np.float64), order=order, trend=trend
-                    ).fit()
-                    last_fit_i = i
-            except Exception:
-                last_result = None
-
-        if last_result is not None:
-            try:
-                fc = last_result.forecast(steps=1)
-                val = float(fc[0])
-                if np.isfinite(val):
-                    preds[i] = np.float64(val)
-            except Exception:
-                last_result = None
-
-        history.append(yi)
 
     return pd.Series(preds, index=y.index, name="y_pred")
 
 
-def discover_models(models_dir: Path) -> list[dict[str, str]]:
+def discover_models(
+    models_dir: Path,
+    *,
+    require_published_model_contract: bool = False,
+) -> list[dict[str, str]]:
     models: list[dict[str, str]] = []
 
-    # baseline: models/baseline/<ts>/model.joblib
+    # baseline: the published pointer is canonical.  Falling back to the
+    # newest versioned artifact preserves backwards compatibility for older
+    # worktrees that predate latest.joblib.
     baseline_root = models_dir / "baseline"
     if baseline_root.exists():
-        latest_dir = _latest_timestamp_dir(baseline_root)
-        model_path = latest_dir / "model.joblib"
-        if model_path.exists():
+        model_path = baseline_root / "latest.joblib"
+        if not model_path.exists():
+            latest_dir = _latest_timestamp_dir(baseline_root)
+            model_path = latest_dir / "model.joblib"
+        baseline_meta = baseline_root / "latest.json"
+        if model_path.exists() and (
+            not require_published_model_contract
+            or _published_metadata(baseline_meta, expected_model_type="ridge") is not None
+        ):
             models.append(
                 {
                     "model_name": "baseline",
@@ -150,9 +232,9 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
             )
 
     # experts:
-    #   - LightGBM metadata: models/experts/<regime>/latest.json
     #   - LightGBM artifact: models/experts/<regime>/latest.joblib
-    #   - ARIMA shadow artifact: models/experts/<regime>/latest.arima.json
+    #   - Canonical ARIMA metadata: models/experts/<regime>/arima/<model_id>.json
+    #   - Legacy ARIMA pointer: models/experts/<regime>/latest.arima.json
     experts_root = models_dir / "experts"
     if experts_root.exists():
         for regime_dir in experts_root.iterdir():
@@ -161,7 +243,11 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
 
             # sklearn-style expert
             latest_model = regime_dir / "latest.joblib"
-            if latest_model.exists():
+            lightgbm_meta = regime_dir / "latest.json"
+            if latest_model.exists() and (
+                not require_published_model_contract
+                or _published_metadata(lightgbm_meta, expected_model_type="lightgbm") is not None
+            ):
                 models.append(
                     {
                         "model_name": f"expert_lightgbm_{regime_dir.name}",
@@ -172,7 +258,42 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
                     }
                 )
 
-            # ARIMA-style expert (prefer the dedicated filename, but keep legacy support)
+            # Multiple ARIMA experts may coexist per regime.  The directory
+            # layout carries the published, immutable-by-name model metadata;
+            # latest.arima.json remains a compatibility pointer only.
+            seen_arima_model_ids: set[str] = set()
+            canonical_arima_root = regime_dir / "arima"
+            if canonical_arima_root.exists():
+                for canonical_arima_meta_path in sorted(canonical_arima_root.glob("*.json")):
+                    try:
+                        arima_meta = _load_json_dict(canonical_arima_meta_path)
+                    except Exception:
+                        continue
+                    if str(arima_meta.get("model_type", "")).lower() != "arima":
+                        continue
+                    if require_published_model_contract and _published_metadata(
+                        canonical_arima_meta_path, expected_model_type="arima"
+                    ) is None:
+                        continue
+                    model_id_raw = arima_meta.get("model_id")
+                    model_id = (
+                        str(model_id_raw).strip()
+                        if model_id_raw not in (None, "")
+                        else f"expert_arima_{regime_dir.name}_{canonical_arima_meta_path.stem}"
+                    )
+                    seen_arima_model_ids.add(model_id)
+                    models.append(
+                        {
+                            "model_name": model_id,
+                            "model_source": "expert",
+                            "model_path": str(canonical_arima_meta_path),
+                            "expert_kind": "arima",
+                            "regime": regime_dir.name,
+                        }
+                    )
+
+            # Prefer the dedicated legacy filename, but retain even older
+            # latest.json metadata when it is unambiguously ARIMA.
             latest_arima_json = regime_dir / "latest.arima.json"
             legacy_latest_json = regime_dir / "latest.json"
             arima_meta_path: Path | None = None
@@ -182,9 +303,22 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
                 arima_meta_path = legacy_latest_json
 
             if arima_meta_path is not None:
+                arima_meta = _load_json_dict(arima_meta_path)
+                if require_published_model_contract and _published_metadata(
+                    arima_meta_path, expected_model_type="arima"
+                ) is None:
+                    continue
+                model_id_raw = arima_meta.get("model_id")
+                model_id = (
+                    str(model_id_raw).strip()
+                    if model_id_raw not in (None, "")
+                    else f"expert_arima_{regime_dir.name}"
+                )
+                if model_id in seen_arima_model_ids:
+                    continue
                 models.append(
                     {
-                        "model_name": f"expert_arima_{regime_dir.name}",
+                        "model_name": model_id,
                         "model_source": "expert",
                         "model_path": str(arima_meta_path),
                         "expert_kind": "arima",
@@ -196,6 +330,11 @@ def discover_models(models_dir: Path) -> list[dict[str, str]]:
     pretrained_root = models_dir / "pretrained"
     if pretrained_root.exists():
         for model_path in pretrained_root.glob("*.joblib"):
+            metadata_path = model_path.with_suffix(".metadata.json")
+            if require_published_model_contract and _published_metadata(
+                metadata_path, expected_model_type="ridge"
+            ) is None:
+                continue
             models.append(
                 {
                     "model_name": model_path.stem,
@@ -229,17 +368,38 @@ def _unwrap_model(obj: Any) -> Any:
     )
 
 
-def _align_X_for_model(model: Any, X: pd.DataFrame) -> pd.DataFrame:
+def _bundle_feature_columns(obj: Any) -> list[str] | None:
+    """Return an explicit feature contract stored with a serialized bundle."""
+    if not isinstance(obj, dict):
+        return None
+
+    raw = obj.get("feature_cols", obj.get("feature_columns"))
+    if not isinstance(raw, list):
+        return None
+
+    cols = [str(column) for column in raw]
+    if not cols or len(set(cols)) != len(cols):
+        raise ValueError("serialized model bundle has an empty or duplicate feature contract")
+    return cols
+
+
+def _align_X_for_model(
+    model: Any,
+    X: pd.DataFrame,
+    *,
+    feature_columns: list[str] | None = None,
+) -> pd.DataFrame:
     """
     Align X to what the model expects.
 
     Priority:
-    1) If sklearn model exposes feature_names_in_, use those columns in that order.
-    2) Otherwise, fall back to expected feature count. If X has extra cols, take first n.
+    1) Serialized bundle feature contract.
+    2) ``feature_names_in_`` exposed by the estimator.
+    3) Legacy positional alignment for old bare estimators only.
     """
-    names = getattr(model, "feature_names_in_", None)
+    names = feature_columns if feature_columns is not None else getattr(model, "feature_names_in_", None)
     if names is not None:
-        name_list = list(names)
+        name_list = [str(name) for name in names]
         missing = [c for c in name_list if c not in X.columns]
         if missing:
             raise RuntimeError(f"Missing required feature columns for model: {missing}")
@@ -292,7 +452,7 @@ def _make_numeric_X(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str], list[str
     return X, converted, dropped
 
 
-def _safe_pred_value(v: Any) -> float:
+def _safe_pred_value(v: Any, *, max_abs_prediction: float) -> float:
     # unwrap numpy scalars
     if hasattr(v, "item"):
         try:
@@ -308,8 +468,11 @@ def _safe_pred_value(v: Any) -> float:
     if not np.isfinite(f):
         raise ValueError(f"prediction is not finite: {f!r}")
 
-    if abs(f) > 1e6:
-        raise ValueError(f"prediction magnitude insane, likely timestamp leak: {f!r}")
+    if abs(f) > float(max_abs_prediction):
+        raise ValueError(
+            "prediction exceeds the configured next-period log-return limit "
+            f"({f!r}; limit={max_abs_prediction!r})"
+        )
 
     return f
 
@@ -331,6 +494,145 @@ def _finite_nunique(values: np.ndarray) -> int:
     if finite.size == 0:
         return 0
     return int(np.unique(finite).size)
+
+
+def _normalised_path(path: str | Path) -> Path:
+    """Resolve a local artifact path without requiring it to exist."""
+    return Path(path).resolve(strict=False)
+
+
+def _same_artifact(left: str | Path, right: str | Path) -> bool:
+    return _normalised_path(left) == _normalised_path(right)
+
+
+def _validate_prediction_array(
+    values: Any,
+    *,
+    config: BatchPredictConfig,
+    model_name: str,
+) -> np.ndarray:
+    """Validate scale and recent diversity before an artifact is published."""
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    if arr.size == 0:
+        raise ValueError(f"model returned no predictions: {model_name}")
+    if not np.isfinite(arr).all():
+        raise ValueError(f"model returned non-finite predictions: {model_name}")
+
+    largest = float(np.max(np.abs(arr)))
+    if largest > float(config.max_abs_prediction):
+        raise ValueError(
+            "prediction scale violates next-period log-return contract for "
+            f"{model_name}: max_abs={largest:.6g}, limit={config.max_abs_prediction:.6g}"
+        )
+
+    window_size = min(max(int(config.prediction_diversity_window), 1), int(arr.size))
+    recent = arr[-window_size:]
+    unique = _finite_nunique(recent)
+    required_unique = max(
+        int(config.min_prediction_nunique),
+        int(np.ceil(window_size * float(config.min_prediction_unique_fraction))),
+    )
+    if unique < required_unique:
+        raise ValueError(
+            "prediction diversity gate failed for "
+            f"{model_name}: recent_nunique={unique}, required={required_unique}, "
+            f"window={window_size}"
+        )
+
+    return cast(np.ndarray, arr)
+
+
+def _arima_predictions_from_metadata(
+    meta: dict[str, Any],
+    *,
+    df_full: pd.DataFrame,
+) -> pd.Series:
+    """Run a regime-specific ARIMA metadata artifact against an inference frame."""
+    try:
+        order = (
+            int(meta["order"]["p"]),
+            int(meta["order"]["d"]),
+            int(meta["order"]["q"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid ARIMA order metadata: {meta.get('order')!r}") from exc
+
+    target_col = str(meta.get("target_col", "log_return_1_x"))
+    if target_col not in df_full.columns:
+        raise RuntimeError(
+            f"ARIMA target_col '{target_col}' not in inference columns: {sorted(df_full.columns)}"
+        )
+
+    training_regime_raw = meta.get("training_regime", meta.get("regime"))
+    training_regime = (
+        str(training_regime_raw).strip().lower()
+        if training_regime_raw not in (None, "", "none")
+        else None
+    )
+    history_regimes: pd.Series | None = None
+    if training_regime is not None:
+        if "regime" not in df_full.columns:
+            raise RuntimeError(
+                "regime-specific ARIMA inference requires a 'regime' column; "
+                "pass the regimes parquet rather than features-only input"
+            )
+        history_regimes = df_full["regime"]
+
+    train_window_raw = meta.get("train_window", None)
+    train_window = int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
+    target_shift = int(meta.get("target_shift", -1))
+
+    return _walk_forward_arima_predict(
+        pd.to_numeric(df_full[target_col], errors="coerce"),
+        order=order,
+        trend=str(meta.get("trend", "n")),
+        refit_interval=int(meta.get("refit_interval", 50)),
+        train_window=train_window,
+        min_train_size=int(meta.get("min_train_size", 120)),
+        history_regimes=history_regimes,
+        training_regime=training_regime,
+        include_current_observation=target_shift < 0,
+        fallback=0.0,
+    )
+
+
+def _prediction_rows(
+    *,
+    row_ids: pd.Index,
+    values: np.ndarray,
+    spec: dict[str, str],
+    is_active: bool,
+    timestamp: int,
+    features_path: str,
+    active_model_type: str | None,
+    active_model_id: str | None,
+    active_model_version: str | None,
+    active_regime: str | None,
+    max_abs_prediction: float,
+) -> list[dict[str, Any]]:
+    if len(row_ids) != len(values):
+        raise RuntimeError(
+            f"prediction row alignment failed for {spec['model_name']}: "
+            f"row_ids={len(row_ids)} predictions={len(values)}"
+        )
+
+    return [
+        {
+            "row_id": int(row_id),
+            "model_name": spec["model_name"],
+            "model_source": spec["model_source"],
+            "y_pred": _safe_pred_value(value, max_abs_prediction=max_abs_prediction),
+            "inference_ts": timestamp,
+            "features_path": features_path,
+            "model_path": spec["model_path"],
+            "is_active": is_active,
+            "active_model_type": active_model_type,
+            "active_model_id": active_model_id,
+            "active_model_version": active_model_version,
+            "active_regime": active_regime,
+        }
+        for row_id, value in zip(row_ids, values, strict=True)
+    ]
 
 
 def _get_active_fields(
@@ -364,21 +666,23 @@ def run(config: BatchPredictConfig) -> Path:
         raise FileNotFoundError(f"Features file not found: {config.features_path}")
 
     recorded_features_path = config.record_features_path or str(config.features_path)
-    df = pd.read_parquet(config.features_path)
+    # Prediction row ids are positional.  Reset once so the feature frame,
+    # ARIMA target series, and every emitted model share the same contract.
+    df = pd.read_parquet(config.features_path).reset_index(drop=True)
 
     # Keep full DF around for ARIMA (needs a target series, not feature matrix)
     df_full = df.copy()
 
-    # Build X by dropping target if present
-    X_raw = df.drop(columns=[config.target_col, "timestamp"], errors="ignore").copy()
-
-    if not pd.api.types.is_integer_dtype(X_raw.index):
-        X_raw = X_raw.reset_index(drop=True)
+    # Keep the observed return available while deriving stationary features.
+    # It is then removed from the tabular model inputs below, so a next-period
+    # return model cannot consume its own observed return as a direct feature.
+    X_raw = df.drop(columns=["timestamp"], errors="ignore").copy()
 
     row_ids = pd.Index(X_raw.index.astype(int))
 
     X, converted_cols, dropped_cols = _make_numeric_X(X_raw)
     X, added_stationary_cols = augment_pairwise_stationary_features(X)
+    X = X.drop(columns=[config.target_col], errors="ignore")
     nan_rows = int((~X.replace([float("inf"), float("-inf")], pd.NA).notna().all(axis=1)).sum())
 
     if X.shape[1] == 0:
@@ -388,20 +692,40 @@ def run(config: BatchPredictConfig) -> Path:
             f"Dropped columns: {dropped_cols}"
         )
 
-    models = discover_models(config.models_dir)
+    eligible_mask = X.replace([float("inf"), float("-inf")], pd.NA).notna().all(axis=1)
+    eligible_row_ids = row_ids[eligible_mask.to_numpy()]
+    if len(eligible_row_ids) == 0:
+        raise RuntimeError("After applying the shared finite-feature contract, no rows remain.")
+
+    models = discover_models(
+        config.models_dir,
+        require_published_model_contract=config.require_published_model_contract,
+    )
 
     # Load active model via registry (opt-in)
     active_load_error: str | None = None
     active_ref_dict: dict[str, Any] | None = None
     active_artifact_path: str | None = None
-    active_model_obj: Any | None = None
-    active_meta: dict[str, Any] | None = None
+    active_registry_requested = config.active_file is not None and config.active_file.exists()
 
     if config.active_file is not None and config.active_file.exists():
         try:
-            active_model_obj, active_meta, active_ref = load_active_model(
-                active_file=config.active_file
-            )
+            _active_model_obj, _active_meta, active_ref = load_active_model(active_file=config.active_file)
+            if config.require_published_model_contract:
+                expected_type = (
+                    "arima"
+                    if active_ref.artifact_path.suffix.lower() == ".json"
+                    else "lightgbm"
+                    if active_ref.model_type == "expert"
+                    else "ridge"
+                )
+                if _published_metadata(
+                    active_ref.metadata_path, expected_model_type=expected_type
+                ) is None:
+                    raise RegistryError(
+                        "active registry artifact is not a published v2 model that passed its "
+                        f"quality gate: {active_ref.model_id}"
+                    )
             active_ref_dict = {
                 "model_type": active_ref.model_type,
                 "regime": active_ref.regime,
@@ -414,161 +738,110 @@ def run(config: BatchPredictConfig) -> Path:
                 "updated_at": active_ref.updated_at,
             }
             active_artifact_path = active_ref.artifact_path.as_posix()
-        except RegistryError as e:
+        except (RegistryError, OSError, ValueError, TypeError) as e:
             active_load_error = repr(e)
 
     active_model_type, active_model_id, active_model_version, active_regime = _get_active_fields(
         active_ref_dict
     )
-    active_model_source = active_model_type or "expert"
+    active_model_source = (
+        active_model_type if active_model_type in {"baseline", "expert", "pretrained"} else "expert"
+    )
+
+    # A configured global active pointer is a production safety contract.  Do
+    # not turn an active load failure into a successful shadows-only run.
+    if active_registry_requested and active_load_error is not None:
+        raise RuntimeError(f"Active registry model could not be loaded: {active_load_error}")
+
+    # The active model is represented once using its canonical model id.  It
+    # is not also emitted as an independent "active" model, which previously
+    # made active/shadow agreement look like duplicate-model behavior.
+    resolved_models: list[dict[str, str]] = []
+    active_was_discovered = False
+    for raw_spec in models:
+        spec = dict(raw_spec)
+        is_active = (
+            active_artifact_path is not None
+            and _same_artifact(spec["model_path"], active_artifact_path)
+        )
+        if is_active:
+            active_was_discovered = True
+            if active_model_id:
+                spec["model_name"] = active_model_id
+            spec["model_source"] = active_model_source
+            spec["is_active"] = "true"
+        else:
+            spec["is_active"] = "false"
+        resolved_models.append(spec)
+
+    if active_artifact_path is not None and not active_was_discovered:
+        active_path = Path(active_artifact_path)
+        resolved_models.append(
+            {
+                "model_name": active_model_id or "active_model",
+                "model_source": active_model_source,
+                "model_path": active_artifact_path,
+                "expert_kind": "arima" if active_path.suffix.lower() == ".json" else "sklearn",
+                "regime": active_regime or "",
+                "is_active": "true",
+            }
+        )
+
+    resolved_models.sort(key=lambda m: (m["model_source"], m["model_name"], m["model_path"]))
 
     rows: list[dict[str, Any]] = []
     failed: list[dict[str, str]] = []
+    executed: list[dict[str, Any]] = []
 
-    # 1) Run active model first (if available) and label it explicitly
-    if active_model_obj is not None and active_artifact_path is not None:
-        try:
-            # If active artifact is JSON, treat it as ARIMA meta and run series-based inference.
-            if active_artifact_path.lower().endswith(".json"):
-                meta = cast(dict[str, Any], active_model_obj)
-
-                order = (
-                    int(meta["order"]["p"]),
-                    int(meta["order"]["d"]),
-                    int(meta["order"]["q"]),
-                )
-                trend = str(meta.get("trend", "n"))
-                refit_interval = int(meta.get("refit_interval", 50))
-                train_window_raw = meta.get("train_window", None)
-                train_window = (
-                    int(train_window_raw) if train_window_raw not in (None, 0, "0") else None
-                )
-                min_train_size = int(meta.get("min_train_size", 120))
-
-                target_col = str(meta.get("target_col", "log_return_1_x"))
-
-                if target_col not in df_full.columns:
-                    raise RuntimeError(
-                        f"Active ARIMA target_col '{target_col}' not in df columns: {sorted(df_full.columns)}"
-                    )
-
-                # IMPORTANT: do NOT shift here. This predicts next-step aligned to current row.
-                y = df_full[target_col].astype(float)
-                y = y.fillna(0.0)
-
-                y_pred = _walk_forward_arima_predict(
-                    y,
-                    order=order,
-                    trend=trend,
-                    refit_interval=refit_interval,
-                    train_window=train_window,
-                    min_train_size=min_train_size,
-                    fallback=0.0,
-                )
-
-                for rid, pred in zip(row_ids, y_pred.to_numpy(), strict=False):
-                    rows.append(
-                        {
-                            "row_id": int(rid),
-                            "model_name": "active",
-                            "model_source": active_model_source,
-                            "y_pred": _safe_pred_value(pred),
-                            "inference_ts": ts,
-                            "features_path": recorded_features_path,
-                            "model_path": active_artifact_path,
-                            "is_active": True,
-                            "active_model_type": active_model_type,
-                            "active_model_id": active_model_id,
-                            "active_model_version": active_model_version,
-                            "active_regime": active_regime,
-                        }
-                    )
-            else:
-                active_model = _unwrap_model(active_model_obj)
-
-                X_aligned = _align_X_for_model(active_model, X)
-                X_clean, row_ids_clean = _drop_nan_rows(X_aligned, row_ids)
-
-                if len(X_clean) == 0:
-                    raise RuntimeError(
-                        "After dropping NaNs, no rows remain for active model inference."
-                    )
-
-                preds = active_model.predict(X_clean)
-
-                for rid, pred in zip(row_ids_clean, preds, strict=False):
-                    rows.append(
-                        {
-                            "row_id": int(rid),
-                            "model_name": "active",
-                            "model_source": active_model_source,
-                            "y_pred": _safe_pred_value(pred),
-                            "inference_ts": ts,
-                            "features_path": recorded_features_path,
-                            "model_path": active_artifact_path,
-                            "is_active": True,
-                            "active_model_type": active_model_type,
-                            "active_model_id": active_model_id,
-                            "active_model_version": active_model_version,
-                            "active_regime": active_regime,
-                        }
-                    )
-        except Exception as e:
-            failed.append(
-                {
-                    "model_name": "active",
-                    "model_source": active_model_source,
-                    "model_path": str(active_artifact_path),
-                    "error": repr(e),
-                }
-            )
-
-    # 2) Run shadow predictions for all discovered models
-    for spec in models:
+    # Run the global active model plus each distinct shadow artifact.  An
+    # active artifact remains global by registry choice; no regime-based
+    # auto-selection happens here.
+    for spec in resolved_models:
         model_path = Path(spec["model_path"])
+        is_active = spec.get("is_active") == "true"
         try:
             if spec.get("expert_kind") == "arima":
-                continue
-
-            loaded = joblib.load(model_path)
-            model = _unwrap_model(loaded)
-
-            X_aligned = _align_X_for_model(model, X)
-            X_clean, row_ids_clean = _drop_nan_rows(X_aligned, row_ids)
-
-            if len(X_clean) == 0:
-                raise RuntimeError("After dropping NaNs, no rows remain for this model inference.")
-
-            preds = model.predict(X_clean)
-            pred_nunique = _finite_nunique(np.asarray(preds, dtype=float))
-            if pred_nunique <= 1:
-                failed.append(
-                    {
-                        "model_name": spec.get("model_name", "unknown"),
-                        "model_source": spec.get("model_source", "unknown"),
-                        "model_path": str(model_path),
-                        "error": "degenerate constant predictions, skipped from latest batch",
-                    }
+                meta = _load_json_dict(model_path)
+                all_predictions = _arima_predictions_from_metadata(meta, df_full=df_full)
+                values = all_predictions.iloc[eligible_row_ids.to_numpy()].to_numpy(dtype=float)
+            else:
+                loaded = joblib.load(model_path)
+                model = _unwrap_model(loaded)
+                X_aligned = _align_X_for_model(
+                    model,
+                    X,
+                    feature_columns=_bundle_feature_columns(loaded),
                 )
-                continue
+                values = np.asarray(model.predict(X_aligned.loc[eligible_mask]), dtype=float)
 
-            for rid, pred in zip(row_ids_clean, preds, strict=False):
-                rows.append(
-                        {
-                            "row_id": int(rid),
-                            "model_name": spec["model_name"],
-                            "model_source": spec["model_source"],
-                            "y_pred": _safe_pred_value(pred),
-                            "inference_ts": ts,
-                            "features_path": recorded_features_path,
-                            "model_path": str(model_path),
-                            "is_active": False,
-                        "active_model_type": active_model_type,
-                        "active_model_id": active_model_id,
-                        "active_model_version": active_model_version,
-                        "active_regime": active_regime,
-                    }
+            values = _validate_prediction_array(values, config=config, model_name=spec["model_name"])
+            rows.extend(
+                _prediction_rows(
+                    row_ids=eligible_row_ids,
+                    values=values,
+                    spec=spec,
+                    is_active=is_active,
+                    timestamp=ts,
+                    features_path=recorded_features_path,
+                    active_model_type=active_model_type,
+                    active_model_id=active_model_id,
+                    active_model_version=active_model_version,
+                    active_regime=active_regime,
+                    max_abs_prediction=config.max_abs_prediction,
                 )
+            )
+            executed.append(
+                {
+                    "model_name": spec["model_name"],
+                    "model_source": spec["model_source"],
+                    "model_path": str(model_path),
+                    "is_active": is_active,
+                    "prediction_rows": int(len(values)),
+                    "recent_prediction_nunique": _finite_nunique(
+                        values[-min(len(values), config.prediction_diversity_window) :]
+                    ),
+                }
+            )
 
         except Exception as e:
             failed.append(
@@ -579,6 +852,17 @@ def run(config: BatchPredictConfig) -> Path:
                     "error": repr(e),
                 }
             )
+
+    if active_ref_dict is not None and not any(bool(record["is_active"]) for record in executed):
+        active_failure = next(
+            (failure for failure in failed if failure.get("model_name") == active_model_id),
+            None,
+        )
+        detail = active_failure.get("error") if active_failure is not None else "not discovered"
+        raise RuntimeError(
+            "Active registry model failed inference safety checks; refusing to publish a "
+            f"shadows-only prediction run. model_id={active_model_id!r} detail={detail}"
+        )
 
     if not rows:
         preview = failed[:5]
@@ -609,13 +893,12 @@ def run(config: BatchPredictConfig) -> Path:
         "run_type": "batch_inference",
         "timestamp": ts,
         "features_path": recorded_features_path,
-        "models_discovered": models,
+        "models_discovered": resolved_models,
+        "models_executed": executed,
         "output_path": str(output_path),
         "latest_path": str(latest_path) if latest_path is not None else None,
         "num_prediction_rows": int(len(out_df)),
-        "num_models_succeeded": int(
-            out_df[["model_source", "model_name"]].drop_duplicates().shape[0]
-        ),
+        "num_models_succeeded": int(len(executed)),
         "failed_models": failed,
         "feature_preprocessing": {
             "converted_datetime_cols": converted_cols,
@@ -641,7 +924,7 @@ def run_stage(
     *,
     features_path: Path,
     active_file: Path = ACTIVE_FILE,
-    target_col: str = "target",
+    target_col: str = "log_return_1_x",
     models_dir: Path = Path("models"),
     output_dir: Path = Path("data/predictions"),
     runs_dir: Path = Path("data/runs"),
@@ -677,14 +960,17 @@ def main() -> None:
     parser.add_argument(
         "--features-path",
         type=Path,
-        default=Path("data/features/latest.parquet"),
-        help="Path to features parquet. Default: data/features/latest.parquet",
+        default=Path("data/regimes/latest.parquet"),
+        help=(
+            "Path to the regimes parquet used for inference. Regime-specific ARIMA experts "
+            "require its regime column. Default: data/regimes/latest.parquet"
+        ),
     )
     parser.add_argument(
         "--target-col",
         type=str,
-        default="target",
-        help="Target column to drop if present. Default: target",
+        default="log_return_1_x",
+        help="Observed return column to drop from tabular features. Default: log_return_1_x",
     )
     parser.add_argument(
         "--active-file",

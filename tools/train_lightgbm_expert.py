@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import joblib
+import lightgbm
 import mlflow
 import mlflow.lightgbm  # important: avoid scoping bugs
 import mlflow.sklearn  # fallback
@@ -41,6 +43,7 @@ class TrainConfig:
     experiment_name: str
     run_name: str
     output_dir: str
+    publish_latest: bool
 
     id_cols: list[str]
     drop_cols: list[str]
@@ -53,6 +56,9 @@ class TrainConfig:
     early_stopping_rounds: int
     num_boost_round: int
     seed: int
+    min_prediction_unique_ratio: float
+    min_prediction_std_ratio: float
+    min_validation_rmse_improvement: float
 
     params_json: str | None
     mlflow_tracking_uri: str | None
@@ -97,12 +103,12 @@ def _parse_args() -> TrainConfig:
         help="Optional rolling window size for volatility normalization (e.g. 20).",
     )
 
-    # NEW: regime controls output folder under models/experts/<regime>/
+    # Regime controls output folder under the selected candidate/publish root.
     p.add_argument(
         "--regime",
         required=True,
         choices=["bullish", "bearish", "sideways"],
-        help="Which regime expert this model is for. Writes to models/experts/<regime>/",
+        help="Which regime expert this model is for.",
     )
     p.add_argument(
         "--min-regime-rows",
@@ -115,11 +121,15 @@ def _parse_args() -> TrainConfig:
     p.add_argument("--experiment-name", default="market-regime", help="MLflow experiment name.")
     p.add_argument("--run-name", default="", help="Optional MLflow run name.")
 
-    # IMPORTANT: now this is the ROOT experts directory (not a per-run leaf dir)
     p.add_argument(
         "--output-dir",
-        default="models/experts",
-        help="Root output folder. Model will be written under models/experts/<regime>/<timestamp>/ and latest.joblib",
+        default="models/candidates/lightgbm",
+        help="Candidate root. This location is intentionally not scanned by live inference.",
+    )
+    p.add_argument(
+        "--publish-latest",
+        action="store_true",
+        help="Explicitly update <output-dir>/<regime>/latest.joblib and latest.json after gates pass.",
     )
 
     p.add_argument(
@@ -145,6 +155,24 @@ def _parse_args() -> TrainConfig:
     p.add_argument("--early-stopping-rounds", type=int, default=50)
     p.add_argument("--num-boost-round", type=int, default=2000)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--min-prediction-unique-ratio",
+        type=float,
+        default=0.05,
+        help="Minimum fraction of finite distinct predictions required on validation and test.",
+    )
+    p.add_argument(
+        "--min-prediction-std-ratio",
+        type=float,
+        default=0.01,
+        help="Minimum prediction standard deviation divided by target standard deviation.",
+    )
+    p.add_argument(
+        "--min-validation-rmse-improvement",
+        type=float,
+        default=0.0,
+        help="Minimum fractional RMSE improvement over a train-mean validation baseline.",
+    )
 
     p.add_argument(
         "--params-json",
@@ -160,7 +188,12 @@ def _parse_args() -> TrainConfig:
 
     run_name = args.run_name.strip()
     if not run_name:
-        run_name = f"{args.model_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        run_name = f"{args.model_name}_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
+
+    if not 0.0 <= args.min_prediction_unique_ratio <= 1.0:
+        raise ValueError("--min-prediction-unique-ratio must be between 0 and 1")
+    if args.min_prediction_std_ratio < 0.0:
+        raise ValueError("--min-prediction-std-ratio must be >= 0")
 
     return TrainConfig(
         features_path=args.features_path,
@@ -176,6 +209,7 @@ def _parse_args() -> TrainConfig:
         experiment_name=args.experiment_name,
         run_name=run_name,
         output_dir=args.output_dir,
+        publish_latest=bool(args.publish_latest),
         id_cols=id_cols,
         drop_cols=drop_cols,
         time_col=args.time_col.strip() if args.time_col else None,
@@ -185,6 +219,9 @@ def _parse_args() -> TrainConfig:
         early_stopping_rounds=args.early_stopping_rounds,
         num_boost_round=args.num_boost_round,
         seed=args.seed,
+        min_prediction_unique_ratio=float(args.min_prediction_unique_ratio),
+        min_prediction_std_ratio=float(args.min_prediction_std_ratio),
+        min_validation_rmse_improvement=float(args.min_validation_rmse_improvement),
         params_json=args.params_json,
         mlflow_tracking_uri=args.mlflow_tracking_uri,
     )
@@ -211,6 +248,27 @@ def _read_df(path: str) -> pd.DataFrame:
     if p.suffix.lower() == ".csv":
         return pd.read_csv(p)
     raise ValueError(f"unsupported file type: {p.suffix}, use parquet or csv")
+
+
+def _normalize_mlflow_uri(uri: str) -> str:
+    normalized = uri.strip()
+    if "://" in normalized or normalized.startswith("file:"):
+        return normalized
+    return Path(normalized).resolve().as_uri()
+
+
+def _atomic_joblib_dump(payload: Any, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    joblib.dump(payload, tmp_path)
+    tmp_path.replace(path)
+
+
+def _atomic_write_json(payload: Any, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.tmp")
+    tmp_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _safe_to_datetime(s: pd.Series) -> pd.Series:
@@ -374,6 +432,101 @@ def _finite_nunique(values: np.ndarray) -> int:
     return int(np.unique(finite).size)
 
 
+def _prediction_diagnostics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+    finite_mask = np.isfinite(y_true) & np.isfinite(y_pred)
+    finite_predictions = y_pred[finite_mask]
+    finite_targets = y_true[finite_mask]
+    if finite_predictions.size == 0:
+        return {
+            "n_finite": 0.0,
+            "n_unique": 0.0,
+            "unique_ratio": 0.0,
+            "prediction_std": float("nan"),
+            "target_std": float("nan"),
+            "prediction_std_ratio": 0.0,
+        }
+
+    prediction_std = float(np.std(finite_predictions))
+    target_std = float(np.std(finite_targets))
+    std_ratio = prediction_std / target_std if target_std > np.finfo(float).eps else 0.0
+    return {
+        "n_finite": float(finite_predictions.size),
+        "n_unique": float(_finite_nunique(finite_predictions)),
+        "unique_ratio": float(_finite_nunique(finite_predictions) / finite_predictions.size),
+        "prediction_std": prediction_std,
+        "target_std": target_std,
+        "prediction_std_ratio": float(std_ratio),
+    }
+
+
+def _quality_gate(
+    *,
+    y_train: np.ndarray,
+    y_val: np.ndarray,
+    val_pred: np.ndarray,
+    y_test: np.ndarray,
+    test_pred: np.ndarray,
+    cfg: TrainConfig,
+) -> dict[str, Any]:
+    """Assess candidate quality without using the test set for model selection."""
+    val_diag = _prediction_diagnostics(y_val, val_pred)
+    test_diag = _prediction_diagnostics(y_test, test_pred)
+    val_rmse = float(np.sqrt(mean_squared_error(y_val, val_pred)))
+    test_rmse = float(np.sqrt(mean_squared_error(y_test, test_pred)))
+    zero_return_test_rmse = float(np.sqrt(np.mean(np.square(y_test))))
+    naive_pred = np.full_like(y_val, fill_value=float(np.mean(y_train)), dtype=float)
+    naive_val_rmse = float(np.sqrt(mean_squared_error(y_val, naive_pred)))
+    rmse_improvement = (
+        (naive_val_rmse - val_rmse) / naive_val_rmse
+        if naive_val_rmse > np.finfo(float).eps
+        else float("-inf")
+    )
+
+    reasons: list[str] = []
+    for split_name, diagnostics in (("validation", val_diag), ("test", test_diag)):
+        if diagnostics["n_finite"] <= 0:
+            reasons.append(f"{split_name}_has_no_finite_predictions")
+        if diagnostics["unique_ratio"] < cfg.min_prediction_unique_ratio:
+            reasons.append(
+                f"{split_name}_unique_ratio={diagnostics['unique_ratio']:.6f} "
+                f"< {cfg.min_prediction_unique_ratio:.6f}"
+            )
+        if diagnostics["prediction_std_ratio"] < cfg.min_prediction_std_ratio:
+            reasons.append(
+                f"{split_name}_prediction_std_ratio={diagnostics['prediction_std_ratio']:.6f} "
+                f"< {cfg.min_prediction_std_ratio:.6f}"
+            )
+
+    if not np.isfinite(rmse_improvement):
+        reasons.append("validation_naive_rmse_is_zero_or_nonfinite")
+    elif rmse_improvement < cfg.min_validation_rmse_improvement:
+        reasons.append(
+            f"validation_rmse_improvement={rmse_improvement:.6f} "
+            f"< {cfg.min_validation_rmse_improvement:.6f}"
+        )
+    if test_rmse > zero_return_test_rmse:
+        reasons.append(
+            f"test_rmse={test_rmse:.6f} > zero_return_test_rmse={zero_return_test_rmse:.6f}"
+        )
+
+    return {
+        "promotion_eligible": not reasons,
+        "reasons": reasons,
+        "validation": val_diag,
+        "test": test_diag,
+        "validation_rmse": val_rmse,
+        "test_rmse": test_rmse,
+        "zero_return_test_rmse": zero_return_test_rmse,
+        "validation_naive_rmse": naive_val_rmse,
+        "validation_rmse_improvement": float(rmse_improvement),
+        "thresholds": {
+            "min_prediction_unique_ratio": cfg.min_prediction_unique_ratio,
+            "min_prediction_std_ratio": cfg.min_prediction_std_ratio,
+            "min_validation_rmse_improvement": cfg.min_validation_rmse_improvement,
+        },
+    }
+
+
 def _preserve_legacy_arima_latest(latest_dir: Path) -> None:
     legacy = latest_dir / "latest.json"
     new_path = latest_dir / "latest.arima.json"
@@ -386,15 +539,19 @@ def _preserve_legacy_arima_latest(latest_dir: Path) -> None:
         return
 
     if isinstance(payload, dict) and str(payload.get("model_type", "")).lower() == "arima":
-        new_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _atomic_write_json(payload, new_path)
 
 
 def run(cfg: TrainConfig) -> Path:
     if cfg.min_regime_rows <= 0:
         raise ValueError("--min-regime-rows must be >= 1")
+    if not 0.0 <= cfg.min_prediction_unique_ratio <= 1.0:
+        raise ValueError("min_prediction_unique_ratio must be between 0 and 1")
+    if cfg.min_prediction_std_ratio < 0.0:
+        raise ValueError("min_prediction_std_ratio must be >= 0")
 
     if cfg.mlflow_tracking_uri:
-        mlflow.set_tracking_uri(cfg.mlflow_tracking_uri)
+        mlflow.set_tracking_uri(_normalize_mlflow_uri(cfg.mlflow_tracking_uri))
 
     mlflow.set_experiment(cfg.experiment_name)
 
@@ -415,8 +572,10 @@ def run(cfg: TrainConfig) -> Path:
     # Build / shift target
     df = _build_target(df, cfg)
 
-    # Remove missing targets
-    df = df[df[cfg.target_col].notna()].reset_index(drop=True)
+    # Remove missing or non-finite targets before any split/quality calculation.
+    df = df.loc[np.isfinite(pd.to_numeric(df[cfg.target_col], errors="coerce"))].reset_index(
+        drop=True
+    )
     if "regime" not in df.columns:
         raise KeyError("Training dataframe is missing required 'regime' column after target prep.")
 
@@ -463,19 +622,12 @@ def run(cfg: TrainConfig) -> Path:
     }
     params.update(user_params)
 
-    # ----------------------------
-    # NEW: output layout
-    # models/experts/<regime>/<timestamp>/
-    # models/experts/<regime>/latest.joblib
-    # ----------------------------
-    ts_slug = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    # Candidate versions are always retained. ``latest`` files are only touched
+    # after all gates pass and the caller explicitly requested publication.
+    ts_slug = datetime.now(UTC).strftime("%Y%m%d_%H%M%S_%f")
     root = Path(cfg.output_dir)
     out_dir = root / cfg.regime / ts_slug
-    out_dir.mkdir(parents=True, exist_ok=True)
-
     latest_dir = root / cfg.regime
-    latest_dir.mkdir(parents=True, exist_ok=True)
-    _preserve_legacy_arima_latest(latest_dir)
 
     with mlflow.start_run(run_name=cfg.run_name) as run:
         mlflow.log_params(
@@ -496,6 +648,10 @@ def run(cfg: TrainConfig) -> Path:
                 "early_stopping_rounds": cfg.early_stopping_rounds,
                 "num_boost_round": cfg.num_boost_round,
                 "seed": cfg.seed,
+                "publish_latest": cfg.publish_latest,
+                "min_prediction_unique_ratio": cfg.min_prediction_unique_ratio,
+                "min_prediction_std_ratio": cfg.min_prediction_std_ratio,
+                "min_validation_rmse_improvement": cfg.min_validation_rmse_improvement,
                 "n_train": len(train_df),
                 "n_val": len(val_df),
                 "n_test": len(test_df),
@@ -529,41 +685,44 @@ def run(cfg: TrainConfig) -> Path:
         test_pred = model.predict(X_test)
         val_pred_nunique = _finite_nunique(np.asarray(val_pred, dtype=float))
         test_pred_nunique = _finite_nunique(np.asarray(test_pred, dtype=float))
-        if val_pred_nunique <= 1 or test_pred_nunique <= 1:
-            raise ValueError(
-                "Refusing to save LightGBM expert because predictions collapsed to a constant. "
-                f"val_pred_nunique={val_pred_nunique} test_pred_nunique={test_pred_nunique}"
-            )
 
         val_metrics = _metrics(y_val.to_numpy(), val_pred)
         test_metrics = _metrics(y_test.to_numpy(), test_pred)
+        quality_gate = _quality_gate(
+            y_train=y_train.to_numpy(dtype=float),
+            y_val=y_val.to_numpy(dtype=float),
+            val_pred=np.asarray(val_pred, dtype=float),
+            y_test=y_test.to_numpy(dtype=float),
+            test_pred=np.asarray(test_pred, dtype=float),
+            cfg=cfg,
+        )
+        promotion_eligible = bool(quality_gate["promotion_eligible"])
 
         mlflow.log_metrics({f"val_{k}": v for k, v in val_metrics.items()})
         mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
         mlflow.log_metric("val_pred_nunique", float(val_pred_nunique))
         mlflow.log_metric("test_pred_nunique", float(test_pred_nunique))
+        mlflow.log_metric(
+            "validation_rmse_improvement", float(quality_gate["validation_rmse_improvement"])
+        )
+        mlflow.log_metric("zero_return_test_rmse", float(quality_gate["zero_return_test_rmse"]))
 
-        # Save feature list (local)
+        out_dir.mkdir(parents=True, exist_ok=False)
         feature_cols_path = out_dir / "feature_columns.json"
-        feature_cols_path.write_text(json.dumps(cols, indent=2), encoding="utf-8")
+        _atomic_write_json(cols, feature_cols_path)
         mlflow.log_artifact(str(feature_cols_path))
 
-        # Convenience copy for "latest"
-        (latest_dir / "feature_columns.json").write_text(
-            json.dumps(cols, indent=2), encoding="utf-8"
-        )
-
-        # NEW: Save joblib artifacts for your pipeline
         model_path = out_dir / "model.joblib"
-        joblib.dump(model, model_path)
+        _atomic_joblib_dump(model, model_path)
 
-        latest_model_path = latest_dir / "latest.joblib"
-        joblib.dump(model, latest_model_path)
-
-        metadata = {
+        metadata: dict[str, Any] = {
+            "artifact_contract_version": 2,
             "model_type": "lightgbm",
             "model_name": cfg.model_name,
             "regime": cfg.regime,
+            "candidate_only": not (cfg.publish_latest and promotion_eligible),
+            "publish_requested": cfg.publish_latest,
+            "promotion_eligible": promotion_eligible,
             "features_path": cfg.features_path,
             "regimes_path": cfg.regimes_path,
             "target_col": cfg.target_col,
@@ -587,13 +746,27 @@ def run(cfg: TrainConfig) -> Path:
             "test_metrics": test_metrics,
             "val_pred_nunique": int(val_pred_nunique),
             "test_pred_nunique": int(test_pred_nunique),
+            "quality_gate": quality_gate,
+            "runtime_versions": {
+                "python": platform.python_version(),
+                "numpy": np.__version__,
+                "pandas": pd.__version__,
+                "lightgbm": lightgbm.__version__,
+                "joblib": joblib.__version__,
+            },
             "run_id": run.info.run_id,
-            "created_utc": datetime.utcnow().isoformat() + "Z",
+            "created_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         }
         metadata_path = out_dir / "metadata.json"
-        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        _atomic_write_json(metadata, metadata_path)
         mlflow.log_artifact(str(metadata_path))
-        (latest_dir / "latest.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+        if cfg.publish_latest and promotion_eligible:
+            latest_dir.mkdir(parents=True, exist_ok=True)
+            _preserve_legacy_arima_latest(latest_dir)
+            _atomic_write_json(cols, latest_dir / "feature_columns.json")
+            _atomic_joblib_dump(model, latest_dir / "latest.joblib")
+            _atomic_write_json(metadata, latest_dir / "latest.json")
 
         # Log model to MLflow (keep your current behavior)
         try:
@@ -612,11 +785,18 @@ def run(cfg: TrainConfig) -> Path:
         mlflow.set_tag("expert_type", "lightgbm")
         mlflow.set_tag("expert_name", cfg.model_name)
         mlflow.set_tag("expert_regime", cfg.regime)
+        mlflow.set_tag("candidate_only", str(not (cfg.publish_latest and promotion_eligible)).lower())
+        mlflow.set_tag("promotion_eligible", str(promotion_eligible).lower())
         mlflow.set_tag("run_id", run.info.run_id)
 
-    print(f"Wrote: {out_dir}")
-    print(f"Wrote: {latest_dir}")
-    print("done")
+    print(f"Wrote LightGBM candidate: {out_dir}")
+    if cfg.publish_latest and promotion_eligible:
+        print(f"Published LightGBM latest pointers: {latest_dir}")
+    if cfg.publish_latest and not promotion_eligible:
+        raise ValueError(
+            "LightGBM candidate failed quality gates; latest pointers were not updated. "
+            f"Reasons: {quality_gate['reasons']}"
+        )
     return out_dir
 
 

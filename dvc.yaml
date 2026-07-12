@@ -27,10 +27,9 @@ stages:
       - data/regimes/latest.parquet
 
   predict:
-    cmd: python -m src.inference.batch_predict --features-path data/features/latest.parquet
+    cmd: python -m src.inference.batch_predict --features-path data/regimes/latest.parquet
     deps:
       - src/inference
-      - data/features/latest.parquet
       - data/regimes/latest.parquet
     outs:
       - data/predictions/latest.parquet
