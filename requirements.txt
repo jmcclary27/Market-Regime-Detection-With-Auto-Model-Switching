@@ -13,6 +13,8 @@ statsmodels==0.14.0
 
 # Market Dependencies
 yfinance
+# Production daily data is fetched through the small stdlib-based Alpaca adapter;
+# no SDK dependency is required.
 
 # CI / Dev Tooling
 pytest

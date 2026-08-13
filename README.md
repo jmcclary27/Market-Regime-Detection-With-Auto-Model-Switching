@@ -265,6 +265,14 @@ ARTIFACT_BUCKET=<bucket> docker compose -f docker-compose.yml -f docker-compose.
 Without that override, S3 synchronization is disabled even if a bucket name is
 present in the environment.
 
+## Frozen daily paper-trading experiment
+
+The optional experiment path runs three comparable SPY portfolios with frozen
+artifacts, daily Alpaca bars, 3 bps common friction, and next-open target fills.
+It is intentionally separate from the active-model switcher. See
+[`docs/frozen_daily_experiment.md`](docs/frozen_daily_experiment.md) for the
+readiness gate and AWS deployment contract.
+
 ## CI + Hardening
 
 Local quality gates (same as CI):

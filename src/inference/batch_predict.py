@@ -230,6 +230,25 @@ def discover_models(
                 }
             )
 
+    # Optional frozen global LightGBM control. It is intentionally separate
+    # from regime experts so the daily experiment can compare routing against
+    # a like-for-like non-regime model without reusing the mutable registry.
+    global_root = models_dir / "global"
+    global_model = global_root / "latest.joblib"
+    global_meta = global_root / "latest.json"
+    if global_model.exists() and (
+        not require_published_model_contract
+        or _published_metadata(global_meta, expected_model_type="lightgbm") is not None
+    ):
+        models.append(
+            {
+                "model_name": "global_lightgbm",
+                "model_source": "global",
+                "model_path": str(global_model),
+                "expert_kind": "sklearn",
+            }
+        )
+
     # experts:
     #   - LightGBM artifact: models/experts/<regime>/latest.joblib
     #   - Canonical ARIMA metadata: models/experts/<regime>/arima/<model_id>.json

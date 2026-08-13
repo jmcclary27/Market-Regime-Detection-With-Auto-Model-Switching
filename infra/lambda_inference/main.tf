@@ -409,7 +409,7 @@ resource "aws_lambda_function" "inference" {
 }
 
 resource "aws_lambda_function" "live_sim" {
-  count = var.deploy_lambda ? 1 : 0
+  count = var.deploy_lambda && !var.enable_frozen_experiment ? 1 : 0
 
   function_name = local.live_sim_lambda_name
   description   = "Versioned S3 event-driven paper live simulation"
@@ -468,7 +468,7 @@ resource "aws_lambda_function_event_invoke_config" "inference" {
 }
 
 resource "aws_lambda_function_event_invoke_config" "live_sim" {
-  count = var.deploy_lambda ? 1 : 0
+  count = var.deploy_lambda && !var.enable_frozen_experiment ? 1 : 0
 
   function_name                = aws_lambda_function.live_sim[0].function_name
   maximum_event_age_in_seconds = 3600
@@ -493,7 +493,7 @@ resource "aws_lambda_permission" "allow_s3_request_events" {
 }
 
 resource "aws_lambda_permission" "allow_s3_live_sim_events" {
-  count = var.deploy_lambda ? 1 : 0
+  count = var.deploy_lambda && !var.enable_frozen_experiment ? 1 : 0
 
   statement_id   = "AllowS3LiveSimCompletionEvents"
   action         = "lambda:InvokeFunction"
@@ -504,7 +504,7 @@ resource "aws_lambda_permission" "allow_s3_live_sim_events" {
 }
 
 resource "aws_s3_bucket_notification" "event_routes" {
-  count = var.deploy_lambda ? 1 : 0
+  count = var.deploy_lambda && !var.enable_frozen_experiment ? 1 : 0
 
   bucket = aws_s3_bucket.inference.id
 

@@ -13,6 +13,20 @@ regimes:
   hmm:
     artifacts_dir: models/regimes/hmm
 
+experiment:
+  enabled: false
+  experiment_id: frozen-daily-spy-v1
+  provider: alpaca
+  symbols: ["SPY", "QQQ"]
+  traded_symbol: SPY
+  starting_cash: 100000.0
+  fee_bps: 1.0
+  slippage_bps: 2.0
+  exposure_thresholds: [-0.001, 0.001]
+  manifest_path: artifacts/experiment/manifest.json
+  # This path is written only by the explicit readiness/freeze workflow.
+  public_payload_path: data/experiment/public/latest.json
+
 logging:
   level: INFO
 

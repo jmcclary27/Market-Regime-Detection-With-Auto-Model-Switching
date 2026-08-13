@@ -43,7 +43,7 @@ def _iter_files(root: Path) -> Iterable[Path]:
 
 
 def _copy_model_sources(models_dir: Path, destination: Path) -> None:
-    for name in ("baseline", "experts", "pretrained"):
+    for name in ("baseline", "experts", "global", "pretrained", "regimes"):
         source = models_dir / name
         if source.exists():
             for candidate in source.rglob("*"):

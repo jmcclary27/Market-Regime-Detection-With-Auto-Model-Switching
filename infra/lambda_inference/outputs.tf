@@ -22,3 +22,8 @@ output "inference_dlq_url" {
   description = "SQS destination for malformed or failed asynchronous Lambda requests."
   value       = aws_sqs_queue.inference_dlq.url
 }
+
+output "experiment_dashboard_url" {
+  description = "Public read-only dashboard URL when the frozen experiment is enabled."
+  value       = try("https://${aws_cloudfront_distribution.dashboard[0].domain_name}", null)
+}

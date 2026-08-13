@@ -124,3 +124,45 @@ variable "dlq_retention_seconds" {
   type        = number
   default     = 1209600
 }
+
+variable "enable_frozen_experiment" {
+  description = "Deploy the frozen three-portfolio executor instead of the legacy single live-sim executor."
+  type        = bool
+  default     = false
+}
+
+variable "experiment_manifest_key" {
+  description = "Versioned S3 key for the immutable experiment manifest."
+  type        = string
+  default     = "experiment/manifest.json"
+}
+
+variable "dashboard_price_class" {
+  description = "CloudFront price class for the public read-only dashboard."
+  type        = string
+  default     = "PriceClass_100"
+}
+
+variable "alpaca_secret_arn" {
+  description = "Secrets Manager ARN holding JSON keys api_key and api_secret for Alpaca market data."
+  type        = string
+  default     = ""
+}
+
+variable "experiment_model_bundle_key" {
+  description = "Frozen model-bundle key referenced by the scheduled producer."
+  type        = string
+  default     = ""
+}
+
+variable "experiment_model_bundle_version_id" {
+  description = "VersionId of the frozen model bundle."
+  type        = string
+  default     = ""
+}
+
+variable "experiment_model_bundle_sha256" {
+  description = "SHA-256 of the frozen model bundle."
+  type        = string
+  default     = ""
+}
