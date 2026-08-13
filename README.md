@@ -19,57 +19,39 @@ trading alpha.
 
 ---
 
-## Running the Project (Current Stub)
+## Quickstart: offline recruiter demo
 
-Install dependencies:
+The default container command is a deterministic, offline demonstration. It
+creates synthetic two-symbol bars, builds features and regimes, trains a local
+baseline, writes the active registry pointer, and runs inference. No AWS,
+market-data, DVC, or pre-existing model state is required.
+
+```bash
+docker compose build
+docker compose run --rm market
+```
+
+The command prints the generated raw data, features, regime labels, registry,
+and predictions. These outputs live under `data/`, `models/`, `registry/`, and
+`mlruns/`; they are local runtime state and intentionally excluded from Git.
+
+To run it without Docker:
 
 ```bash
 pip install -r requirements.txt
+python -m src.demo.run
 ```
 
-## Run a Market Poll
-
-This command fetches a small slice of market data, writes a timestamped CSV
-to disk, updates a latest pointer, and logs a JSON run record.
+## Run individual stages
 
 ```bash
 python -m src.jobs.poll_market_data
-```
-
-## Run Feature Pipeline (v0)
-
-This command builds deterministic features from a provided bars file and writes
-a parquet artifact and manifest to disk.
-
-```bash
 python -m src.features.run_features --input <bars.csv|bars.parquet> --timestamp <timestamp>
+python -m src.regimes.run_regime_detection --input <features.parquet> --timestamp <timestamp>
 ```
 
-Outputs:
-
-- data/features/<timestamp>.parquet
-- data/features/<timestamp>.manifest.json (schema + content hash)
-
-## Run Regime Detection (v0, rule-based)
-
-This command labels each row with a simple rule-based market regime and writes
-a timestamped parquet artifact to disk. The output includes a
-`regime_explanation` column for debugging.
-
-```bash
-python -m src.regimes.run_regime_detection
-```
-
-Outputs:
-
-- data/regimes/regimes_<timestamp>.parquet
-
-Output columns (minimum):
-
-- timestamp
-- symbol
-- regime
-- regime_explanation
+The live poll and full pipeline use external market data; the offline demo is
+the recommended presentation path.
 
 ## Run Machine Learning Parts
 
@@ -185,7 +167,7 @@ python -m src.eval.run_evaluator
 This project uses a lightweight **local model registry** to track which model is
 currently active for inference.
 
-The active model is defined by a single pointer file: registry/active_model.yamlv
+The active model is defined by a single local pointer file: `registry/active_model.yaml`.
 
 
 This file specifies the exact model artifact to load (type, version, path), making
@@ -214,7 +196,7 @@ PR 9 extends the canary switcher introduced in PR 8 by making model switching **
 - Prevent premature switching by requiring sufficient evaluation evidence
 - Increase robustness and realism of the deployment logic
 
-### Planned Additions
+### Implemented behavior
 
 **1. Regime-Aware Promotion Logic**
 - Read the current regime from `data/regimes/latest.parquet`
@@ -254,7 +236,8 @@ PR 9 extends the canary switcher introduced in PR 8 by making model switching **
 
 ## Pipeline Orchestration
 
-This PR adds a **single local pipeline entrypoint** that stitches together the end-to-end workflow using the new programmatic `run(...)` APIs (instead of calling CLI scripts).
+The local pipeline entrypoint stitches together the end-to-end workflow using
+programmatic `run(...)` APIs.
 
 ### What it does
 
@@ -273,6 +256,15 @@ Running the pipeline will execute, in order:
 python -m src.pipeline.run -v
 ```
 
+To opt into an S3 bootstrap, set `ARTIFACT_BUCKET` and use the cloud override:
+
+```bash
+ARTIFACT_BUCKET=<bucket> docker compose -f docker-compose.yml -f docker-compose.cloud.yml run --rm market pipeline
+```
+
+Without that override, S3 synchronization is disabled even if a bucket name is
+present in the environment.
+
 ## CI + Hardening
 
 Local quality gates (same as CI):
@@ -286,12 +278,13 @@ pytest -q
 
 ### Data and model versioning (DVC)
 
-This repo uses DVC to version datasets and trained model artifacts, backed by an S3 remote.
+This repo can use DVC to version datasets and trained model artifacts through an
+S3 remote. It is optional and is not needed for the local demo.
 
 - Pull tracked data/model artifacts:
   `dvc pull`
 
-- Reproduce the pipeline (once `dvc.yaml` is in place):
+- Reproduce the configured pipeline:
   `dvc repro`
 
 - After generating new artifacts:

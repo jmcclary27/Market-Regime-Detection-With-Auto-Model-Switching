@@ -1,11 +1,11 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 import pandas as pd
 import yaml
 
-from src.features.stationary import augment_pairwise_stationary_features, summarize_feature_ranges
 from src.deploy.switcher import SwitchConfig, run_switcher
+from src.features.stationary import augment_pairwise_stationary_features, summarize_feature_ranges
 
 
 def _write_scorecard(path: Path, baseline_rmse: float, candidate_rmse: float) -> None:
@@ -68,7 +68,9 @@ def test_switcher_promotes_and_updates_registry(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     (data_dir / "scorecards").mkdir(parents=True)
     (tmp_path / "registry").mkdir(parents=True)
-    _write_guard_inputs(tmp_path, candidate_model_id="expert_bullish", y_pred=[0.01, 0.015, 0.02, 0.018])
+    _write_guard_inputs(
+        tmp_path, candidate_model_id="expert_bullish", y_pred=[0.01, 0.015, 0.02, 0.018]
+    )
 
     _write_scorecard(
         data_dir / "scorecards" / "latest.parquet", baseline_rmse=1.0, candidate_rmse=0.8

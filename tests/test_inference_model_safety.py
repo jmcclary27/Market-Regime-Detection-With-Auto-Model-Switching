@@ -234,7 +234,9 @@ def test_regime_specific_arima_is_executed_as_a_shadow_model(tmp_path: Path) -> 
 
 def test_regime_specific_arima_history_changes_the_forecast() -> None:
     y = pd.Series([0.01, 0.02, 0.03, -0.01, -0.02, -0.03, 0.04, -0.04])
-    regimes = pd.Series(["bullish", "bullish", "bullish", "bearish", "bearish", "bearish", "bullish", "bearish"])
+    regimes = pd.Series(
+        ["bullish", "bullish", "bullish", "bearish", "bearish", "bearish", "bullish", "bearish"]
+    )
 
     bullish = _walk_forward_arima_predict(
         y,

@@ -38,49 +38,21 @@ Thumbs.db
 # Pipeline artifacts (generated)
 ############################
 
-# Raw ingestion outputs
-data/raw/
-data/yfinance_cache/
-
-# Feature pipeline outputs
-data/features/
-
-# Regime detection outputs
-data/regimes/
-
-# Batch inference outputs
-data/predictions/
-
-# Evaluation outputs
-data/scorecards/
-data/reporting/
-
-# Run metadata
-data/runs/
-
-# Drift-monitoring snapshots
-artifacts/drift/
-
-# Deployment / switcher logs
-data/deployments/
-
-# Models (baseline, experts, pretrained copies)
-models/baseline
-models/candidates
-models/experts
-models/pretrained
-models/regimes
-
-# Registry runtime state
-registry/active_model.yaml
-registry/*.bak
+# Generated runtime state. Demo and pipeline commands recreate these locally.
+/artifacts/
+/data/*
+!/data/.gitignore
+/models/
+/registry/active_model.yaml
+/registry/history.parquet
+/registry/*.bak
 
 ############################
 # MLflow local tracking
 ############################
-mlruns/
-mlflow.db
-mlflow.db-journal
+/mlruns/
+/mlflow.db
+/mlflow.db-journal
 
 ############################
 # Generic data formats (generated only)
@@ -90,7 +62,7 @@ mlflow.db-journal
 ############################
 # Temporary / scratch
 ############################
-runs/
+/runs/
 
 ############################
 # Airflow runtime artifacts
@@ -103,8 +75,3 @@ airflow/webserver_config.py
 # Model Planning
 ############################
 model_future.txt
-
-# Testing
-.github/workflows/localCI.yml
-tests/test_pipeline_replay.py
-tests/test_model_contracts.py

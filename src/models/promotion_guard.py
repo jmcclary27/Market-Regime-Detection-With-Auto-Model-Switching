@@ -97,7 +97,9 @@ def _candidate_name_variants(candidate_model_name: str) -> list[str]:
     return deduped
 
 
-def _candidate_rows(preds: pd.DataFrame, candidate_model_name: str) -> tuple[pd.DataFrame, str | None]:
+def _candidate_rows(
+    preds: pd.DataFrame, candidate_model_name: str
+) -> tuple[pd.DataFrame, str | None]:
     if "model_name" not in preds.columns:
         raise ValueError("predictions parquet missing required column: model_name")
     if "y_pred" not in preds.columns:
@@ -371,6 +373,7 @@ def evaluate_candidate_promotion_guard(
             metadata_path=metadata_path.as_posix() if metadata_path is not None else None,
         )
 
+    assert metadata_path is not None
     training_feature_stats = metadata.get("feature_range_stats")
     if not isinstance(training_feature_stats, dict) or not training_feature_stats:
         return PromotionGuardResult(

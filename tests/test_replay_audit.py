@@ -60,10 +60,22 @@ def test_build_replay_audit_passes_when_replay_matches(tmp_path: Path) -> None:
     lineage = {
         "run_ts": run_ts,
         "artifacts": {
-            "raw_csv": {"path": f"data/raw/{run_ts}.csv", "sha256": sha256_file(tmp_path / "data" / "raw" / f"{run_ts}.csv")},
-            "features_parquet": {"path": f"data/features/{run_ts}.parquet", "sha256": sha256_file(tmp_path / "data" / "features" / f"{run_ts}.parquet")},
-            "regimes_parquet": {"path": f"data/regimes/{run_ts}.parquet", "sha256": sha256_file(tmp_path / "data" / "regimes" / f"{run_ts}.parquet")},
-            "predictions_parquet": {"path": f"data/predictions/predictions_{run_ts}.parquet", "sha256": sha256_file(original_predictions)},
+            "raw_csv": {
+                "path": f"data/raw/{run_ts}.csv",
+                "sha256": sha256_file(tmp_path / "data" / "raw" / f"{run_ts}.csv"),
+            },
+            "features_parquet": {
+                "path": f"data/features/{run_ts}.parquet",
+                "sha256": sha256_file(tmp_path / "data" / "features" / f"{run_ts}.parquet"),
+            },
+            "regimes_parquet": {
+                "path": f"data/regimes/{run_ts}.parquet",
+                "sha256": sha256_file(tmp_path / "data" / "regimes" / f"{run_ts}.parquet"),
+            },
+            "predictions_parquet": {
+                "path": f"data/predictions/predictions_{run_ts}.parquet",
+                "sha256": sha256_file(original_predictions),
+            },
         },
     }
 
@@ -101,9 +113,18 @@ def test_build_replay_audit_records_prediction_drift(tmp_path: Path) -> None:
         "run_ts": run_ts,
         "artifacts": {
             "raw_csv": {"path": f"data/raw/{run_ts}.csv", "sha256": sha256_file(raw_path)},
-            "features_parquet": {"path": f"data/features/{run_ts}.parquet", "sha256": sha256_file(features_path)},
-            "regimes_parquet": {"path": f"data/regimes/{run_ts}.parquet", "sha256": sha256_file(regimes_path)},
-            "predictions_parquet": {"path": f"data/predictions/predictions_{run_ts}.parquet", "sha256": sha256_file(original_predictions)},
+            "features_parquet": {
+                "path": f"data/features/{run_ts}.parquet",
+                "sha256": sha256_file(features_path),
+            },
+            "regimes_parquet": {
+                "path": f"data/regimes/{run_ts}.parquet",
+                "sha256": sha256_file(regimes_path),
+            },
+            "predictions_parquet": {
+                "path": f"data/predictions/predictions_{run_ts}.parquet",
+                "sha256": sha256_file(original_predictions),
+            },
         },
     }
 

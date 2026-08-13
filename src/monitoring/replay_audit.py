@@ -16,7 +16,7 @@ REPLAY_COMPARABLE_LABELS = (
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
 def _resolve_path(project_root: Path, raw_path: str | None) -> Path | None:
@@ -135,8 +135,15 @@ def build_replay_audit(
         original_path = _artifact_path(lineage, project_root, label)
         expected_sha = _artifact_sha(lineage, label)
         replay_path = replay_artifacts.get(label)
-        exists = bool(original_path is not None and original_path.exists() and replay_path is not None and replay_path.exists())
-        actual_sha = sha256_file(replay_path) if replay_path is not None and replay_path.exists() else None
+        exists = bool(
+            original_path is not None
+            and original_path.exists()
+            and replay_path is not None
+            and replay_path.exists()
+        )
+        actual_sha = (
+            sha256_file(replay_path) if replay_path is not None and replay_path.exists() else None
+        )
         exact_match = bool(exists and expected_sha is not None and actual_sha == expected_sha)
         checked_artifacts.append(
             {
@@ -156,7 +163,11 @@ def build_replay_audit(
     replay_predictions = replay_artifacts.get("predictions_parquet")
     semantic_pass = False
     max_prediction_drift: float | None = None
-    if original_predictions is not None and replay_predictions is not None and replay_predictions.exists():
+    if (
+        original_predictions is not None
+        and replay_predictions is not None
+        and replay_predictions.exists()
+    ):
         drift_summary = _prediction_drift(original_predictions, replay_predictions)
         semantic_pass = bool(drift_summary["semantic_pass"])
         max_prediction_drift = drift_summary["max_prediction_drift"]

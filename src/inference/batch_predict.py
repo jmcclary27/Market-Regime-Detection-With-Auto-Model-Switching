@@ -44,6 +44,9 @@ class BatchPredictConfig:
     # Production discovery accepts only explicit, validated publications.
     # Tests and one-off diagnostics can opt into legacy artifacts deliberately.
     require_published_model_contract: bool = True
+    # Demo bootstrapping can intentionally run just its explicit active model
+    # rather than every locally accumulated shadow artifact.
+    include_discovered_models: bool = True
 
 
 def _latest_timestamp_dir(parent: Path) -> Path:
@@ -139,9 +142,8 @@ def _walk_forward_arima_predict(
 
     for i in range(len(y_arr)):
         yi = float(y_arr[i])
-        row_matches_training_regime = (
-            normalized_training_regime is None
-            or (regime_arr is not None and str(regime_arr[i]) == normalized_training_regime)
+        row_matches_training_regime = normalized_training_regime is None or (
+            regime_arr is not None and str(regime_arr[i]) == normalized_training_regime
         )
 
         # A next-period target can use the current observed return.  Invalid
@@ -153,10 +155,9 @@ def _walk_forward_arima_predict(
         hist_used = [x for x in hist_used if np.isfinite(x)]
 
         if len(hist_used) >= int(min_train_size):
-            need_refit = (
-                (len(history) - last_fit_history_size) >= int(refit_interval)
-                or last_result is None
-            )
+            need_refit = (len(history) - last_fit_history_size) >= int(
+                refit_interval
+            ) or last_result is None
             if need_refit:
                 try:
                     import warnings
@@ -179,9 +180,7 @@ def _walk_forward_arima_predict(
             # preserving the bounded rolling-window reset at the next refit.
             if last_result is not None and len(history) > last_result_history_size:
                 try:
-                    additions = np.asarray(
-                        history[last_result_history_size:], dtype=np.float64
-                    )
+                    additions = np.asarray(history[last_result_history_size:], dtype=np.float64)
                     last_result = last_result.append(additions, refit=False)
                     last_result_history_size = len(history)
                 except Exception:
@@ -271,9 +270,13 @@ def discover_models(
                         continue
                     if str(arima_meta.get("model_type", "")).lower() != "arima":
                         continue
-                    if require_published_model_contract and _published_metadata(
-                        canonical_arima_meta_path, expected_model_type="arima"
-                    ) is None:
+                    if (
+                        require_published_model_contract
+                        and _published_metadata(
+                            canonical_arima_meta_path, expected_model_type="arima"
+                        )
+                        is None
+                    ):
                         continue
                     model_id_raw = arima_meta.get("model_id")
                     model_id = (
@@ -304,9 +307,10 @@ def discover_models(
 
             if arima_meta_path is not None:
                 arima_meta = _load_json_dict(arima_meta_path)
-                if require_published_model_contract and _published_metadata(
-                    arima_meta_path, expected_model_type="arima"
-                ) is None:
+                if (
+                    require_published_model_contract
+                    and _published_metadata(arima_meta_path, expected_model_type="arima") is None
+                ):
                     continue
                 model_id_raw = arima_meta.get("model_id")
                 model_id = (
@@ -331,9 +335,10 @@ def discover_models(
     if pretrained_root.exists():
         for model_path in pretrained_root.glob("*.joblib"):
             metadata_path = model_path.with_suffix(".metadata.json")
-            if require_published_model_contract and _published_metadata(
-                metadata_path, expected_model_type="ridge"
-            ) is None:
+            if (
+                require_published_model_contract
+                and _published_metadata(metadata_path, expected_model_type="ridge") is None
+            ):
                 continue
             models.append(
                 {
@@ -397,7 +402,11 @@ def _align_X_for_model(
     2) ``feature_names_in_`` exposed by the estimator.
     3) Legacy positional alignment for old bare estimators only.
     """
-    names = feature_columns if feature_columns is not None else getattr(model, "feature_names_in_", None)
+    names = (
+        feature_columns
+        if feature_columns is not None
+        else getattr(model, "feature_names_in_", None)
+    )
     if names is not None:
         name_list = [str(name) for name in names]
         missing = [c for c in name_list if c not in X.columns]
@@ -697,9 +706,13 @@ def run(config: BatchPredictConfig) -> Path:
     if len(eligible_row_ids) == 0:
         raise RuntimeError("After applying the shared finite-feature contract, no rows remain.")
 
-    models = discover_models(
-        config.models_dir,
-        require_published_model_contract=config.require_published_model_contract,
+    models = (
+        discover_models(
+            config.models_dir,
+            require_published_model_contract=config.require_published_model_contract,
+        )
+        if config.include_discovered_models
+        else []
     )
 
     # Load active model via registry (opt-in)
@@ -710,7 +723,9 @@ def run(config: BatchPredictConfig) -> Path:
 
     if config.active_file is not None and config.active_file.exists():
         try:
-            _active_model_obj, _active_meta, active_ref = load_active_model(active_file=config.active_file)
+            _active_model_obj, _active_meta, active_ref = load_active_model(
+                active_file=config.active_file
+            )
             if config.require_published_model_contract:
                 expected_type = (
                     "arima"
@@ -719,9 +734,10 @@ def run(config: BatchPredictConfig) -> Path:
                     if active_ref.model_type == "expert"
                     else "ridge"
                 )
-                if _published_metadata(
-                    active_ref.metadata_path, expected_model_type=expected_type
-                ) is None:
+                if (
+                    _published_metadata(active_ref.metadata_path, expected_model_type=expected_type)
+                    is None
+                ):
                     raise RegistryError(
                         "active registry artifact is not a published v2 model that passed its "
                         f"quality gate: {active_ref.model_id}"
@@ -760,9 +776,8 @@ def run(config: BatchPredictConfig) -> Path:
     active_was_discovered = False
     for raw_spec in models:
         spec = dict(raw_spec)
-        is_active = (
-            active_artifact_path is not None
-            and _same_artifact(spec["model_path"], active_artifact_path)
+        is_active = active_artifact_path is not None and _same_artifact(
+            spec["model_path"], active_artifact_path
         )
         if is_active:
             active_was_discovered = True
@@ -814,7 +829,9 @@ def run(config: BatchPredictConfig) -> Path:
                 )
                 values = np.asarray(model.predict(X_aligned.loc[eligible_mask]), dtype=float)
 
-            values = _validate_prediction_array(values, config=config, model_name=spec["model_name"])
+            values = _validate_prediction_array(
+                values, config=config, model_name=spec["model_name"]
+            )
             rows.extend(
                 _prediction_rows(
                     row_ids=eligible_row_ids,
@@ -933,6 +950,7 @@ def run_stage(
     latest_name: str | None = "latest.parquet",
     run_meta_name: str | None = None,
     record_features_path: str | None = None,
+    include_discovered_models: bool = True,
 ) -> Path:
     """
     Orchestration-friendly entrypoint.
@@ -949,6 +967,7 @@ def run_stage(
         latest_name=latest_name,
         run_meta_name=run_meta_name,
         record_features_path=record_features_path,
+        include_discovered_models=include_discovered_models,
     )
     return run(cfg)
 

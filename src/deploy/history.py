@@ -71,7 +71,9 @@ def normalize_deployment_event(event: dict[str, Any]) -> dict[str, Any]:
         None if row.get("candidate_model_id") in (None, "") else str(row["candidate_model_id"])
     )
     row["active_model_id_after"] = (
-        None if row.get("active_model_id_after") in (None, "") else str(row["active_model_id_after"])
+        None
+        if row.get("active_model_id_after") in (None, "")
+        else str(row["active_model_id_after"])
     )
     row["window_type"] = None if row.get("window_type") in (None, "") else str(row["window_type"])
     row["window_value"] = _coerce_int(row.get("window_value"))

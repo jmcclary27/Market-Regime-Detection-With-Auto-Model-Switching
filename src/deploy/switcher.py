@@ -52,7 +52,9 @@ def write_active_model_yaml(
 ) -> bool:
     def _infer_regime(candidate_model_id: str) -> str | None:
         for regime in ("bullish", "bearish", "sideways"):
-            if candidate_model_id == f"expert_{regime}" or candidate_model_id.endswith(f"_{regime}"):
+            if candidate_model_id == f"expert_{regime}" or candidate_model_id.endswith(
+                f"_{regime}"
+            ):
                 return regime
             if candidate_model_id.startswith(f"expert_arima_{regime}_"):
                 return regime
@@ -485,18 +487,22 @@ def run_switcher(
         project_root = data_dir.parent
         predictions_path = project_root / "data" / "predictions" / "latest.parquet"
         candidate_type = "baseline"
-        if resolved_candidate_id.startswith("expert_lightgbm_") or resolved_candidate_id.startswith(
-            "expert_arima_"
-        ) or resolved_candidate_id in {"expert_bullish", "expert_bearish", "expert_sideways"}:
+        if (
+            resolved_candidate_id.startswith("expert_lightgbm_")
+            or resolved_candidate_id.startswith("expert_arima_")
+            or resolved_candidate_id in {"expert_bullish", "expert_bearish", "expert_sideways"}
+        ):
             candidate_type = "expert"
         elif resolved_candidate_id != "baseline":
             candidate_type = "pretrained"
 
         regime = None
         for maybe_regime in ("bullish", "bearish", "sideways"):
-            if resolved_candidate_id == f"expert_{maybe_regime}" or resolved_candidate_id.endswith(
-                f"_{maybe_regime}"
-            ) or resolved_candidate_id.startswith(f"expert_arima_{maybe_regime}_"):
+            if (
+                resolved_candidate_id == f"expert_{maybe_regime}"
+                or resolved_candidate_id.endswith(f"_{maybe_regime}")
+                or resolved_candidate_id.startswith(f"expert_arima_{maybe_regime}_")
+            ):
                 regime = maybe_regime
                 break
 

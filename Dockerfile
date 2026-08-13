@@ -50,4 +50,4 @@ USER appuser
 # Entrypoint
 # -------------------------
 ENTRYPOINT ["/bin/bash", "/app/scripts/entrypoint.sh"]
-CMD ["pipeline"]
+CMD ["demo"]

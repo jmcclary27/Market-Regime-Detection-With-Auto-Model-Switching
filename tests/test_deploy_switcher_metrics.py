@@ -1,10 +1,10 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
 import pandas as pd
 
-from src.features.stationary import augment_pairwise_stationary_features, summarize_feature_ranges
 from src.deploy.switcher import SwitchConfig, run_switcher
+from src.features.stationary import augment_pairwise_stationary_features, summarize_feature_ranges
 
 
 def _write_guard_inputs(root: Path, *, candidate_model_id: str, y_pred: list[float]) -> None:
@@ -52,7 +52,9 @@ def test_switcher_logs_metrics_from_scorecard(tmp_path: Path) -> None:
     data_dir = tmp_path / "data"
     scorecards_dir = data_dir / "scorecards"
     scorecards_dir.mkdir(parents=True)
-    _write_guard_inputs(tmp_path, candidate_model_id="expert_bullish", y_pred=[0.01, 0.015, 0.02, 0.018])
+    _write_guard_inputs(
+        tmp_path, candidate_model_id="expert_bullish", y_pred=[0.01, 0.015, 0.02, 0.018]
+    )
 
     df = pd.DataFrame(
         {

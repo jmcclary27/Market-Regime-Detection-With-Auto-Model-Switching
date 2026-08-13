@@ -118,11 +118,14 @@ def test_write_active_appends_history_only_when_pointer_changes(tmp_path: Path) 
 
     assert write_active(first, active_file=active_file) is True
     assert write_active(first, active_file=active_file) is False
-    assert write_active(
-        second,
-        active_file=active_file,
-        event_context={"source": "test", "run_ts": "20260101_000000Z", "reason": "swap"},
-    ) is True
+    assert (
+        write_active(
+            second,
+            active_file=active_file,
+            event_context={"source": "test", "run_ts": "20260101_000000Z", "reason": "swap"},
+        )
+        is True
+    )
 
     history = pd.read_parquet(tmp_path / "registry" / "history.parquet")
     assert len(history) == 2

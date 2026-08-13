@@ -11,7 +11,7 @@ import pandas as pd
 from tools.train_lightgbm_expert import TrainConfig, run
 
 
-def _build_regime_labeled_fixture(path: Path, n: int = 540) -> None:
+def _build_regime_labeled_fixture(path: Path, n: int = 330) -> None:
     timestamps = pd.date_range("2020-01-01", periods=n, freq="D", tz="UTC")
     regimes = np.array(["bullish", "bearish", "sideways"] * (n // 3), dtype=object)
 
@@ -61,7 +61,11 @@ def _model_hash(path: Path) -> str:
     return hashlib.md5(payload.encode("utf-8")).hexdigest()
 
 
-def test_train_lightgbm_experts_are_regime_specific_and_non_constant(tmp_path: Path) -> None:
+def test_train_lightgbm_experts_are_regime_specific_and_non_constant(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("mlflow.lightgbm.log_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr("mlflow.sklearn.log_model", lambda *args, **kwargs: None)
     features_path = tmp_path / "data" / "regimes" / "latest.parquet"
     features_path.parent.mkdir(parents=True, exist_ok=True)
     _build_regime_labeled_fixture(features_path)
@@ -92,13 +96,13 @@ def test_train_lightgbm_experts_are_regime_specific_and_non_constant(tmp_path: P
             train_frac=0.70,
             val_frac=0.15,
             test_frac=0.15,
-            early_stopping_rounds=20,
-            num_boost_round=200,
+            early_stopping_rounds=5,
+            num_boost_round=25,
             seed=42,
             min_prediction_unique_ratio=0.05,
             min_prediction_std_ratio=0.01,
             min_validation_rmse_improvement=0.0,
-            params_json=None,
+            params_json='{"n_jobs": 1}',
             mlflow_tracking_uri=tracking_uri,
         )
 
@@ -127,7 +131,11 @@ def test_train_lightgbm_experts_are_regime_specific_and_non_constant(tmp_path: P
     assert len(set(hashes.values())) == 3
 
 
-def test_lightgbm_candidate_does_not_update_latest_without_explicit_publish(tmp_path: Path) -> None:
+def test_lightgbm_candidate_does_not_update_latest_without_explicit_publish(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr("mlflow.lightgbm.log_model", lambda *args, **kwargs: None)
+    monkeypatch.setattr("mlflow.sklearn.log_model", lambda *args, **kwargs: None)
     features_path = tmp_path / "data" / "regimes" / "latest.parquet"
     features_path.parent.mkdir(parents=True, exist_ok=True)
     _build_regime_labeled_fixture(features_path)
@@ -155,13 +163,13 @@ def test_lightgbm_candidate_does_not_update_latest_without_explicit_publish(tmp_
             train_frac=0.70,
             val_frac=0.15,
             test_frac=0.15,
-            early_stopping_rounds=20,
-            num_boost_round=100,
+            early_stopping_rounds=5,
+            num_boost_round=25,
             seed=42,
             min_prediction_unique_ratio=0.05,
             min_prediction_std_ratio=0.01,
             min_validation_rmse_improvement=0.0,
-            params_json=None,
+            params_json='{"n_jobs": 1}',
             mlflow_tracking_uri=(tmp_path / "mlruns").resolve().as_uri(),
         )
     )

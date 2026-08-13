@@ -4,19 +4,17 @@ services:
     container_name: market-regime
     working_dir: /app
     environment:
-      - ARTIFACT_BUCKET=market-regime-artifacts-26e3ed5c 
-      - PROJECT_ROOT=/app
-      - DATA_DIR=/app/data
-      - PYTHONPATH=/app
-      - MLFLOW_TRACKING_URI=file:/app/mlruns
-      - RUFF_CACHE_DIR=/tmp/ruff_cache
-      - PYTEST_ADDOPTS=-o cache_dir=/tmp/pytest_cache
-      - MYPY_CACHE_DIR=/tmp/mypy_cache
+      S3_SYNC_ENABLED: ${S3_SYNC_ENABLED:-false}
+      ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-}
+      PROJECT_ROOT: /app
+      DATA_DIR: /app/data
+      PYTHONPATH: /app
+      MLFLOW_TRACKING_URI: file:/app/mlruns
+      RUFF_CACHE_DIR: /tmp/ruff_cache
+      PYTEST_ADDOPTS: -o cache_dir=/tmp/pytest_cache
+      MYPY_CACHE_DIR: /tmp/mypy_cache
     volumes:
       - ./data:/app/data
       - ./models:/app/models
+      - ./registry:/app/registry
       - ./mlruns:/app/mlruns
-      - ~/.aws:/home/appuser/.aws:ro
-    restart: unless-stopped
-    env_file:
-      - docker.env

@@ -290,7 +290,9 @@ def run_pipeline(
 
             if replay:
                 assert lineage is not None
-                raw_latest = _resolve_path(cfg.project_root, lineage["artifacts"]["raw_csv"]["path"])
+                raw_latest = _resolve_path(
+                    cfg.project_root, lineage["artifacts"]["raw_csv"]["path"]
+                )
                 LOG.info("Replay raw input: %s", raw_latest)
             else:
                 raw_latest = latest_raw_file(cfg.data_dir / "raw")
@@ -332,12 +334,18 @@ def run_pipeline(
                 audit_raw_bars(
                     raw_path=raw_latest,
                     run_ts=cfg.run_ts,
-                    finished_at_utc=cast(str | None, record.get("finished_at_utc")) if record else None,
+                    finished_at_utc=cast(str | None, record.get("finished_at_utc"))
+                    if record
+                    else None,
                     symbols=cast(list[str] | None, record.get("symbols")) if record else symbols,
                     interval=interval,
-                    provider_failure_count=int(record.get("provider_failure_count", 0)) if record else 0,
+                    provider_failure_count=int(record.get("provider_failure_count", 0))
+                    if record
+                    else 0,
                     provider_attempt_count=provider_attempt_count,
-                    run_type=cast(str | None, record.get("run_type")) if record else "pipeline_poll",
+                    run_type=cast(str | None, record.get("run_type"))
+                    if record
+                    else "pipeline_poll",
                     output_path=output_path,
                 )
                 data_quality_audit_json = output_path
@@ -374,7 +382,9 @@ def run_pipeline(
                 out_dir.mkdir(parents=True, exist_ok=True)
 
                 diag_path = out_dir / f"diagnostics_{cfg.run_ts}.json"
-                diag_path.write_text(json.dumps(diag.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+                diag_path.write_text(
+                    json.dumps(diag.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
+                )
 
                 pd.DataFrame(diag.transition_counts).to_csv(
                     out_dir / f"transition_counts_{cfg.run_ts}.csv", index=False
@@ -387,7 +397,9 @@ def run_pipeline(
                     if mlflow_obj is not None and mlflow_obj.active_run() is not None:
                         mlflow_obj.log_metric(m.REGIME_ENTROPY, diag.regime_entropy)
                         mlflow_obj.log_metric(m.AVG_REGIME_DURATION, diag.avg_regime_duration)
-                        mlflow_obj.log_metric(m.SWITCHES_PER_1000_STEPS, diag.switches_per_1000_steps)
+                        mlflow_obj.log_metric(
+                            m.SWITCHES_PER_1000_STEPS, diag.switches_per_1000_steps
+                        )
                         for idx, value in enumerate(diag.pct_time_regime):
                             mlflow_obj.log_metric(f"{m.PCT_TIME_REGIME_PREFIX}{idx}", float(value))
                         mlflow_obj.log_artifact(str(diag_path))
@@ -603,7 +615,10 @@ def run_pipeline(
                 nonlocal wf_portfolio_metrics_parquet, promotion_decision_json
 
                 wf_portfolio_metrics_parquet = (
-                    cfg.project_root / "data" / "walkforward" / f"portfolio_metrics_{cfg.run_ts}.parquet"
+                    cfg.project_root
+                    / "data"
+                    / "walkforward"
+                    / f"portfolio_metrics_{cfg.run_ts}.parquet"
                 )
                 if not wf_portfolio_metrics_parquet.exists():
                     raise FileNotFoundError(
@@ -675,9 +690,13 @@ def run_pipeline(
             artifacts={
                 "raw_csv": str(raw_latest) if raw_latest is not None else None,
                 "features_parquet": str(features_parquet) if features_parquet is not None else None,
-                "features_manifest": str(features_manifest) if features_manifest is not None else None,
+                "features_manifest": str(features_manifest)
+                if features_manifest is not None
+                else None,
                 "regimes_parquet": str(regimes_parquet) if regimes_parquet is not None else None,
-                "predictions_parquet": str(predictions_parquet) if predictions_parquet is not None else None,
+                "predictions_parquet": str(predictions_parquet)
+                if predictions_parquet is not None
+                else None,
                 "data_quality_audit_json": str(data_quality_audit_json)
                 if data_quality_audit_json is not None
                 else None,

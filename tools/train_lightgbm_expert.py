@@ -785,7 +785,9 @@ def run(cfg: TrainConfig) -> Path:
         mlflow.set_tag("expert_type", "lightgbm")
         mlflow.set_tag("expert_name", cfg.model_name)
         mlflow.set_tag("expert_regime", cfg.regime)
-        mlflow.set_tag("candidate_only", str(not (cfg.publish_latest and promotion_eligible)).lower())
+        mlflow.set_tag(
+            "candidate_only", str(not (cfg.publish_latest and promotion_eligible)).lower()
+        )
         mlflow.set_tag("promotion_eligible", str(promotion_eligible).lower())
         mlflow.set_tag("run_id", run.info.run_id)
 

@@ -267,9 +267,7 @@ def run(cfg: TrainConfig) -> Path:
             f"{len(expert_df)} < {cfg.min_regime_rows}. No artifact was written."
         )
 
-    train_df, val_df, test_df = _time_split(
-        expert_df, cfg.train_frac, cfg.val_frac, cfg.test_frac
-    )
+    train_df, val_df, test_df = _time_split(expert_df, cfg.train_frac, cfg.val_frac, cfg.test_frac)
     if len(train_df) < cfg.min_train_rows:
         raise ValueError(
             f"Ridge expert training split has {len(train_df)} rows, below "
@@ -310,7 +308,8 @@ def run(cfg: TrainConfig) -> Path:
     quality_gate = _zero_return_quality_gate(
         val_df[cfg.target_col].to_numpy(dtype=float),
         np.asarray(val_pred, dtype=float),
-        test_df[cfg.target_col].to_numpy(dtype=float), np.asarray(test_pred, dtype=float)
+        test_df[cfg.target_col].to_numpy(dtype=float),
+        np.asarray(test_pred, dtype=float),
     )
     promotion_eligible = bool(quality_gate["promotion_eligible"])
 

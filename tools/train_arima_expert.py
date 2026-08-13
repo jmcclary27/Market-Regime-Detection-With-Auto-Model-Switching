@@ -61,7 +61,9 @@ class TrainConfig:
 
 
 def _parse_args() -> TrainConfig:
-    p = argparse.ArgumentParser(description="Train a regime-specific ARIMA candidate and log to MLflow.")
+    p = argparse.ArgumentParser(
+        description="Train a regime-specific ARIMA candidate and log to MLflow."
+    )
 
     p.add_argument("--features-path", required=True)
     p.add_argument(
@@ -516,7 +518,9 @@ def run(cfg: TrainConfig) -> Path:
     # Build the next-period target on the full time series *before* selecting a regime.
     # Filtering first would turn target_shift=-1 into "next matching regime", which is wrong.
     df = _build_target(df, cfg)
-    df = df.loc[np.isfinite(pd.to_numeric(df[cfg.target_col], errors="coerce"))].reset_index(drop=True)
+    df = df.loc[np.isfinite(pd.to_numeric(df[cfg.target_col], errors="coerce"))].reset_index(
+        drop=True
+    )
     target_ready_rows = len(df)
     regime_df = _select_regime_rows(df, cfg)
 

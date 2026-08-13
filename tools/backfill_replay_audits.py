@@ -39,11 +39,21 @@ def _replay_inputs_exist(project_root: Path, lineage: dict[str, object]) -> tupl
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Backfill replay audit summaries from lineage runs.")
+    parser = argparse.ArgumentParser(
+        description="Backfill replay audit summaries from lineage runs."
+    )
     parser.add_argument("--project-root", default=str(ROOT))
-    parser.add_argument("--run-ts", action="append", default=None, help="Replay one or more specific run_ts values.")
-    parser.add_argument("--rewrite-existing", action="store_true", help="Regenerate replay audits even when they already exist.")
-    parser.add_argument("--stop-on-error", action="store_true", help="Abort on the first replay execution error.")
+    parser.add_argument(
+        "--run-ts", action="append", default=None, help="Replay one or more specific run_ts values."
+    )
+    parser.add_argument(
+        "--rewrite-existing",
+        action="store_true",
+        help="Regenerate replay audits even when they already exist.",
+    )
+    parser.add_argument(
+        "--stop-on-error", action="store_true", help="Abort on the first replay execution error."
+    )
     return parser
 
 

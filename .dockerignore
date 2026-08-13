@@ -16,6 +16,7 @@ models/
 mlruns/
 runs/
 registry/
+artifacts/
 
 *.parquet
 *.joblib

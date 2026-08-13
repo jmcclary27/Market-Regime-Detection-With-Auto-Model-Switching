@@ -5,7 +5,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-
 _PAIRWISE_BASE_COLS = (
     "close_x",
     "log_return_1_x",

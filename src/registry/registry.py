@@ -190,7 +190,9 @@ def write_active(
                 "source": context.get("source") or "registry.write_active",
                 "run_ts": context.get("run_ts"),
                 "reason": context.get("reason"),
-                "previous_model_type": previous_ref.model_type if previous_ref is not None else None,
+                "previous_model_type": previous_ref.model_type
+                if previous_ref is not None
+                else None,
                 "previous_model_id": previous_ref.model_id if previous_ref is not None else None,
                 "previous_version": previous_ref.version if previous_ref is not None else None,
                 "previous_artifact_path": (

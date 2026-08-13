@@ -166,7 +166,9 @@ def test_poll_intraday_bars_clamps_minute_lookback_for_yahoo_limit(
     ]
 
 
-def test_first_start_initializes_without_trade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_first_start_initializes_without_trade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg = _cfg(tmp_path)
     raw_path = tmp_path / "raw.parquet"
     raw = pd.DataFrame(
@@ -181,7 +183,9 @@ def test_first_start_initializes_without_trade(tmp_path: Path, monkeypatch: pyte
 
     monkeypatch.setattr(
         "src.trading.live_sim.build_cycle_artifacts",
-        lambda cfg, run_ts, now: CycleArtifacts(raw_path, tmp_path / "f", tmp_path / "r", tmp_path / "p"),
+        lambda cfg, run_ts, now: CycleArtifacts(
+            raw_path, tmp_path / "f", tmp_path / "r", tmp_path / "p"
+        ),
     )
 
     result = run_once(cfg, now=datetime(2026, 5, 18, 14, 11, 0, tzinfo=UTC))

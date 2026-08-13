@@ -84,9 +84,7 @@ class LiveSimConfig:
                 paths_cfg.get("loop_state_path", "data/live_sim/live_loop_state.json")
             ),
             lock_path=Path(paths_cfg.get("lock_path", "data/live_sim/live_sim.lock")),
-            heartbeat_path=Path(
-                paths_cfg.get("heartbeat_path", "data/live_sim/heartbeat.json")
-            ),
+            heartbeat_path=Path(paths_cfg.get("heartbeat_path", "data/live_sim/heartbeat.json")),
             trades_path=Path(paths_cfg.get("trades_path", "data/live_sim/trades.parquet")),
             equity_path=Path(paths_cfg.get("equity_path", "data/live_sim/equity_curve.parquet")),
         )
@@ -105,9 +103,7 @@ class LiveSimConfig:
             starting_cash=float(live.get("starting_cash", 100_000.0)),
             dry_run=bool(live.get("dry_run", True)),
             lock_timeout_seconds=int(live.get("lock_timeout_seconds", 900)),
-            provider_failure_backoff_seconds=int(
-                live.get("provider_failure_backoff_seconds", 300)
-            ),
+            provider_failure_backoff_seconds=int(live.get("provider_failure_backoff_seconds", 300)),
             paths=paths,
         )
 
@@ -351,8 +347,8 @@ def latest_closed_bar(
         raise ValueError(f"No finite raw open/close bars found for traded symbol: {symbol}")
 
     interval = interval_to_timedelta(cfg.interval)
-    cutoff = to_utc_timestamp(now) - interval - pd.Timedelta(
-        seconds=cfg.candle_close_buffer_seconds
+    cutoff = (
+        to_utc_timestamp(now) - interval - pd.Timedelta(seconds=cfg.candle_close_buffer_seconds)
     )
     closed = data[data["timestamp"] <= cutoff].sort_values("timestamp", kind="mergesort")
     if closed.empty:
@@ -449,7 +445,9 @@ def active_prediction_for_bar(
 
     actual_model_id = str(row.get("active_model_id", row.get("model_name", "unknown")))
     actual_model_name = (
-        actual_model_id if str(row.get("model_name", "active")) == "active" else str(row["model_name"])
+        actual_model_id
+        if str(row.get("model_name", "active")) == "active"
+        else str(row["model_name"])
     )
 
     return (
@@ -733,10 +731,7 @@ def run_once(cfg: LiveSimConfig, *, now: datetime | None = None) -> dict[str, An
 
     if signal == "HOLD":
         loop_state["pending_signal"] = None
-        if (
-            active is not None
-            and decision_reason == "created pending signal for next candle open"
-        ):
+        if active is not None and decision_reason == "created pending signal for next candle open":
             decision_reason = "hold signal recorded without pending fill"
     elif not _should_queue_pending_signal(
         signal,

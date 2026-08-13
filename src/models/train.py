@@ -246,7 +246,9 @@ def run(cfg: TrainConfig) -> Path:
         )
 
     # Features-only numeric columns
-    exclude = {cfg.timestamp_col, "symbol", cfg.target_col}
+    # The observed return is the training target's source and is deliberately
+    # removed at inference time by the shared batch-prediction contract.
+    exclude = {cfg.timestamp_col, "symbol", cfg.target_col, resolved_return_col}
     feature_cols = [
         c for c in feats.columns if c not in exclude and pd.api.types.is_numeric_dtype(feats[c])
     ]
@@ -299,7 +301,8 @@ def run(cfg: TrainConfig) -> Path:
     quality_gate = _zero_return_quality_gate(
         val_metrics,
         val_df[cfg.target_col].to_numpy(dtype=float),
-        test_metrics, test_df[cfg.target_col].to_numpy(dtype=float)
+        test_metrics,
+        test_df[cfg.target_col].to_numpy(dtype=float),
     )
     promotion_eligible = bool(quality_gate["promotion_eligible"])
 
@@ -380,7 +383,9 @@ def run(cfg: TrainConfig) -> Path:
         mlflow.log_param("n_features", int(len(feature_cols)))
         mlflow.log_param("return_col", str(cfg.return_col))
         mlflow.log_param("resolved_return_col", str(resolved_return_col))
-        mlflow.log_param("candidate_only", str(not (cfg.publish_latest and promotion_eligible)).lower())
+        mlflow.log_param(
+            "candidate_only", str(not (cfg.publish_latest and promotion_eligible)).lower()
+        )
         mlflow.log_param("promotion_eligible", str(promotion_eligible).lower())
         mlflow.log_metric("X_train_nan_frac", float(nan_frac))
         mlflow.log_metric("test_mae", float(test_m["mae"]))
@@ -390,9 +395,7 @@ def run(cfg: TrainConfig) -> Path:
         if val_m is not None:
             mlflow.log_metric("val_mae", float(val_m["mae"]))
             mlflow.log_metric("val_rmse", float(val_m["rmse"]))
-            mlflow.log_metric(
-                "zero_return_val_rmse", float(quality_gate["zero_return_val_rmse"])
-            )
+            mlflow.log_metric("zero_return_val_rmse", float(quality_gate["zero_return_val_rmse"]))
         if val_pred_nunique is not None:
             mlflow.log_metric("val_pred_nunique", float(val_pred_nunique))
         mlflow.log_artifact(str(model_path))

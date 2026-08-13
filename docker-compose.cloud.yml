@@ -1,0 +1,7 @@
+services:
+  market:
+    environment:
+      S3_SYNC_ENABLED: "true"
+      ARTIFACT_BUCKET: ${ARTIFACT_BUCKET:-}
+    volumes:
+      - ~/.aws:/home/appuser/.aws:ro

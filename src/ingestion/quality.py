@@ -118,7 +118,12 @@ def _status_from_metrics(
 ) -> str:
     if row_count == 0:
         return "error"
-    if provider_failure_count > 0 or duplicate_rate > 0.0 or missing_rate > 0.0 or late_data_rate > 0.0:
+    if (
+        provider_failure_count > 0
+        or duplicate_rate > 0.0
+        or missing_rate > 0.0
+        or late_data_rate > 0.0
+    ):
         return "warning"
     return "ok"
 
@@ -181,7 +186,9 @@ def audit_raw_bars(
         "run_ts": run_ts,
         "run_type": run_type or "raw_poll",
         "raw_path": str(raw_path),
-        "symbols": list(symbols) if symbols is not None else sorted(unique_rows["symbol"].unique().tolist()),
+        "symbols": list(symbols)
+        if symbols is not None
+        else sorted(unique_rows["symbol"].unique().tolist()),
         "interval": interval,
         "row_count": int(len(frame)),
         "unique_bar_count": int(len(unique_rows)),
@@ -191,7 +198,9 @@ def audit_raw_bars(
         "missing_bar_rate": missing_rate,
         "expected_bar_count": expected_count,
         "latest_staleness_seconds_by_symbol": staleness_by_symbol,
-        "stale_bar_p95_seconds": float(staleness_values.quantile(0.95)) if not staleness_values.empty else None,
+        "stale_bar_p95_seconds": float(staleness_values.quantile(0.95))
+        if not staleness_values.empty
+        else None,
         "late_data_count": late_count,
         "late_data_rate": late_data_rate,
         "provider_failure_count": int(provider_failure_count),

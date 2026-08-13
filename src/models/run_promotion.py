@@ -168,7 +168,9 @@ def _resolve_ref_from_predictions(model_name: str, predictions_path: Path) -> Ac
             metadata_path = model_path.parent / "latest.json"
     elif model_source == "baseline":
         candidate_meta = model_path.with_suffix(".json")
-        metadata_path = candidate_meta if candidate_meta.exists() else model_path.parent / "latest.json"
+        metadata_path = (
+            candidate_meta if candidate_meta.exists() else model_path.parent / "latest.json"
+        )
     elif model_source == "pretrained":
         candidate_meta = model_path.with_suffix(".json")
         metadata_path = candidate_meta if candidate_meta.exists() else None
@@ -395,7 +397,9 @@ def run_promotion(
             "candidate_metric_value": chal.get("sharpe"),
             "active_max_drawdown": inc.get("max_drawdown"),
             "candidate_max_drawdown": chal.get("max_drawdown"),
-            "promotion_guard_allowed": promotion_guard.allowed if promotion_guard is not None else None,
+            "promotion_guard_allowed": promotion_guard.allowed
+            if promotion_guard is not None
+            else None,
             "pointer_written": bool(pointer_written and promoted and write_pointer),
             "reason": str(reason),
         },
