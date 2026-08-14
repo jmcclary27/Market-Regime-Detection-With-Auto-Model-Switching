@@ -27,9 +27,10 @@ def select_static_model(scorecard: pd.DataFrame) -> dict[str, Any]:
     )
     if eligible.empty:
         raise ValueError("No global candidates have complete walk-forward metrics")
+    eligible = eligible.assign(_drawdown_magnitude=eligible["max_drawdown"].abs())
     ordered = eligible.sort_values(
-        ["walk_forward_net_sharpe", "max_drawdown", "cumulative_return", "model_id"],
-        ascending=[False, False, False, True],
+        ["walk_forward_net_sharpe", "_drawdown_magnitude", "cumulative_return", "model_id"],
+        ascending=[False, True, False, True],
         kind="mergesort",
     )
     return dict(ordered.iloc[0])

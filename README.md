@@ -273,6 +273,15 @@ It is intentionally separate from the active-model switcher. See
 [`docs/frozen_daily_experiment.md`](docs/frozen_daily_experiment.md) for the
 readiness gate and AWS deployment contract.
 
+Freeze its candidate package only through the explicit, cutoff-bound command:
+
+```bash
+python -m tools.freeze_experiment --experiment-id <id> --official-start-date <YYYY-MM-DD> \
+  --data-cutoff <YYYY-MM-DD> --features-path <features.parquet> \
+  --regimes-path <regimes.parquet> --feature-manifest-path <features.manifest.json> \
+  --hmm-artifacts-dir <hmm-dir> --output-dir <artifact-dir>
+```
+
 ## CI + Hardening
 
 Local quality gates (same as CI):

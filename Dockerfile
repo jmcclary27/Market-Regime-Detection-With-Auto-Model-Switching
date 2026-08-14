@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
     git \
+    libgomp1 \
     awscli \
  && rm -rf /var/lib/apt/lists/*
 
