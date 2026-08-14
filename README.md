@@ -297,3 +297,13 @@ S3 remote. It is optional and is not needed for the local demo.
 
 - After generating new artifacts:
   `dvc push`
+
+## Agentic development
+
+Repository-wide agent instructions live in [`AGENTS.md`](AGENTS.md). The
+issue-to-PR, reviewer, verifier, MCP, runtime-aware review, and
+GitHub-workflow target architecture is documented in
+[`docs/agentic-development.md`](docs/agentic-development.md). Current CI and
+local quality-gate commands remain the source of truth for implementation
+changes; future agentic phases must not be treated as enabled until their
+permissions, tests, and runtime evidence are in place.
