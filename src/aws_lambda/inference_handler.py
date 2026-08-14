@@ -21,6 +21,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, cast
 
+from src.experiment.frozen_inference import run_frozen_stage
 from src.inference.batch_predict import run_stage
 
 from .inference_contract import (
@@ -31,7 +32,11 @@ from .inference_contract import (
     parse_s3_event,
     request_version_token,
 )
-from .model_bundle import ModelBundleError, validate_model_bundle_layout
+from .model_bundle import (
+    ModelBundleError,
+    is_frozen_experiment_bundle,
+    validate_model_bundle_layout,
+)
 
 LOG = logging.getLogger(__name__)
 _WORKING_DIRECTORY_LOCK = Lock()
@@ -275,23 +280,36 @@ def process_record(s3: Any, record: S3EventRecord) -> dict[str, Any]:
         )
         _safe_extract_model_bundle(bundle_path, bundle_root)
 
-        with _bundle_working_directory(bundle_root):
-            prediction_path = run_stage(
+        recorded_features_path = (
+            f"s3://{record.bucket}/{request.inference_input.key}"
+            f"?versionId={request.inference_input.version_id}"
+        )
+        if is_frozen_experiment_bundle(bundle_root):
+            prediction_path = run_frozen_stage(
                 features_path=input_path,
-                active_file=Path("registry/active_model.yaml"),
-                target_col=request.target_col,
-                models_dir=Path("models"),
+                bundle_root=bundle_root,
                 output_dir=output_dir,
                 runs_dir=runs_dir,
                 inference_ts=request.inference_ts,
                 output_name="predictions.parquet",
-                latest_name=None,
                 run_meta_name="inference_run.json",
-                record_features_path=(
-                    f"s3://{record.bucket}/{request.inference_input.key}"
-                    f"?versionId={request.inference_input.version_id}"
-                ),
+                record_features_path=recorded_features_path,
             )
+        else:
+            with _bundle_working_directory(bundle_root):
+                prediction_path = run_stage(
+                    features_path=input_path,
+                    active_file=Path("registry/active_model.yaml"),
+                    target_col=request.target_col,
+                    models_dir=Path("models"),
+                    output_dir=output_dir,
+                    runs_dir=runs_dir,
+                    inference_ts=request.inference_ts,
+                    output_name="predictions.parquet",
+                    latest_name=None,
+                    run_meta_name="inference_run.json",
+                    record_features_path=recorded_features_path,
+                )
         run_meta_path = runs_dir / "inference_run.json"
         if not run_meta_path.exists():
             raise LambdaInferenceError("Inference core did not produce its run metadata JSON")
