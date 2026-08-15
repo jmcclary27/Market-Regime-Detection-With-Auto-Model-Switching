@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import platform
 import time
 from dataclasses import dataclass
@@ -224,6 +225,8 @@ def run(cfg: TrainConfig) -> Path:
 
     if cfg.tracking_uri:
         mlflow.set_tracking_uri(_normalize_mlflow_uri(cfg.tracking_uri))
+    # The project deliberately uses local file-backed MLflow tracking for offline runs.
+    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
     mlflow.set_experiment(cfg.experiment_name)
 
     feats = pd.read_parquet(cfg.features_path)

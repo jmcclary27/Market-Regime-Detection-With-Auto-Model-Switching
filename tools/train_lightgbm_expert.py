@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -553,6 +554,8 @@ def run(cfg: TrainConfig) -> Path:
     if cfg.mlflow_tracking_uri:
         mlflow.set_tracking_uri(_normalize_mlflow_uri(cfg.mlflow_tracking_uri))
 
+    # Candidate training supports the repository's local file-backed MLflow contract.
+    os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
     mlflow.set_experiment(cfg.experiment_name)
 
     df = _read_df(cfg.features_path)

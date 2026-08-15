@@ -1,67 +1,72 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
 import pytest
+from numpy.typing import NDArray
 
-from src.config.load_config import load_config
 from src.regimes.hmm import label_regimes_hmm
 
 
-def test_hmm_labeling_contract() -> None:
-    """
-    Contract test for HMM regime labeling.
+class _IdentityScaler:
+    def transform(self, values: NDArray[np.float64]) -> NDArray[np.float64]:
+        return values
 
-    This test is an *integration-style contract* because label_regimes_hmm()
-    requires trained artifacts on disk (models/regimes/hmm/latest/*).
 
-    In CI (clean checkout), those artifacts won't exist, so we skip.
-    Locally, if you've trained the HMM artifacts, the test runs and enforces:
-    - output length matches input
-    - output schema is correct
-    - regime labels are from the allowed set
-    """
-    artifacts_dir = Path("models/regimes/hmm/latest")
-    required = [
-        artifacts_dir / "model.joblib",
-        artifacts_dir / "scaler.joblib",
-        artifacts_dir / "state_mapping.json",
-        artifacts_dir / "metadata.json",
-    ]
-    if not all(p.exists() for p in required):
-        pytest.skip("HMM artifacts missing, run tools/train_hmm_regime.py to generate them")
+class _SpreadDirectionModel:
+    def predict(self, values: NDArray[np.float64]) -> NDArray[np.int64]:
+        return np.asarray(values[:, 2] >= 0.0, dtype=np.int64)
 
-    cfg = load_config("src/config/settings.yaml")
 
-    n = 200
-    rng = np.random.default_rng(0)
+def _write_hmm_artifacts(tmp_path: Path) -> dict[str, object]:
+    artifacts_root = tmp_path / "hmm"
+    latest = artifacts_root / "latest"
+    latest.mkdir(parents=True)
+    joblib.dump(_SpreadDirectionModel(), latest / "model.joblib")
+    joblib.dump(_IdentityScaler(), latest / "scaler.joblib")
+    (latest / "state_mapping.json").write_text(
+        json.dumps({"0": "bearish", "1": "bullish"}), encoding="utf-8"
+    )
+    (latest / "metadata.json").write_text(
+        json.dumps(
+            {
+                "obs_mode": "minimal",
+                "obs_cols": ["ret_x", "ret_y", "spread_ret"],
+                "per_state_stats": [
+                    {"_state": 0, "mean_spread": -0.01},
+                    {"_state": 1, "mean_spread": 0.01},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {"regimes": {"hmm": {"artifacts_dir": str(artifacts_root)}}}
 
-    close_x = 100 + np.cumsum(rng.normal(0.0, 1.0, size=n))
-    close_y = 200 + np.cumsum(rng.normal(0.0, 1.5, size=n))
 
-    df = pd.DataFrame({"close_x": close_x, "close_y": close_y})
-    df["sma_10_x"] = df["close_x"].rolling(10, min_periods=1).mean()
-    df["sma_10_y"] = df["close_y"].rolling(10, min_periods=1).mean()
-    df["log_return_1_x"] = np.log(df["close_x"]).diff().fillna(0.0)
-    df["log_return_1_y"] = np.log(df["close_y"]).diff().fillna(0.0)
+def test_hmm_labeling_contract_uses_explicit_temp_artifacts(tmp_path: Path) -> None:
+    cfg = _write_hmm_artifacts(tmp_path)
+    features = pd.DataFrame(
+        {
+            "log_return_1_x": [-0.02, 0.03, np.nan],
+            "log_return_1_y": [0.0, 0.01, 0.0],
+        }
+    )
 
-    df = df[
-        [
-            "log_return_1_x",
-            "log_return_1_y",
-            "close_x",
-            "sma_10_x",
-            "close_y",
-            "sma_10_y",
-        ]
-    ]
+    labels = label_regimes_hmm(features, cfg=cfg)
 
-    labels = label_regimes_hmm(df, cfg=cfg)
-
-    assert len(labels) == len(df)
     assert list(labels.columns) == ["regime", "regime_explanation"]
+    assert labels["regime"].tolist() == ["bearish", "bullish", "unknown"]
+    assert "train_mean_spread=-0.01" in labels.loc[0, "regime_explanation"]
+    assert labels.loc[2, "regime_explanation"] == "insufficient data for HMM observations"
 
-    allowed = {"bullish", "bearish", "sideways", "unknown"}
-    assert set(labels["regime"].dropna().unique()).issubset(allowed)
+
+def test_hmm_labeling_fails_clearly_when_artifacts_are_missing(tmp_path: Path) -> None:
+    cfg = {"regimes": {"hmm": {"artifacts_dir": str(tmp_path / "missing")}}}
+    features = pd.DataFrame({"log_return_1_x": [0.01], "log_return_1_y": [0.0]})
+
+    with pytest.raises(FileNotFoundError, match="Missing HMM artifacts"):
+        label_regimes_hmm(features, cfg=cfg)

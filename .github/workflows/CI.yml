@@ -5,6 +5,9 @@ on:
   push:
     branches: ["main"]
 
+permissions:
+  contents: read
+
 jobs:
   docker-quality-checks:
     runs-on: ubuntu-latest
@@ -50,7 +53,6 @@ jobs:
 
   replay-determinism:
     needs: docker-quality-checks
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -68,4 +70,4 @@ jobs:
           tags: market-regime:ci
 
       - name: Run offline demo determinism test
-        run: docker run --rm market-regime:ci sh -lc "pytest -m integration"
+        run: docker run --rm market-regime:ci sh -lc "pytest -q -m integration"

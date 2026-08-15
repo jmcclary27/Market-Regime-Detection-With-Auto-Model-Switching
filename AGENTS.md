@@ -34,7 +34,7 @@ architecture:
 
 - `AGENTS.md` guidance is present at the repository root.
 - `.github/workflows/CI.yml` runs secret scanning, Dockerized Ruff, formatting,
-  mypy, unit tests, and a main-branch integration/replay job.
+  mypy, unit tests, and an integration/replay job for pull requests and `main`.
 - Pipeline runs write telemetry summaries, lineage, data-quality audits, drift
   snapshots, replay audits, deployment history, and project-metrics reports.
 - The local registry and switcher provide explicit active-model pointers,

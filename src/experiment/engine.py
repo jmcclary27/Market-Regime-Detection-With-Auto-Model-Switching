@@ -67,13 +67,15 @@ def process_daily_bar(
     fills: dict[str, dict[str, Any] | None] = {name: None for name in PORTFOLIOS}
     cfg = TargetExposureConfig(fee_bps=manifest.fee_bps, slippage_bps=manifest.slippage_bps)
     for name, pending in state.get("pending_targets", {}).items():
-        fills[name] = rebalance_to_target(
+        fill = rebalance_to_target(
             state=accounts[name],
             target_exposure=float(pending["target_exposure"]),
             open_price=open_price,
             config=cfg,
         )
-        fills[name]["signal_bar_timestamp_utc"] = pending["signal_bar_timestamp_utc"]
+        if fill is not None:
+            fill["signal_bar_timestamp_utc"] = pending["signal_bar_timestamp_utc"]
+        fills[name] = fill
 
     static_prediction = _model_prediction(
         predictions, row_id=row_id, model_id=manifest.static_model.model_id
