@@ -37,7 +37,7 @@ pytest -q
 ```
 
 The CI unit job uses `pytest -m 'not integration'`; the integration job runs on
-the protected main-branch path. Do not mark a test as integration merely to
+pull requests and `main` pushes. Do not mark a test as integration merely to
 avoid a deterministic unit gate.
 
 When a test needs a runtime artifact, create it in `tmp_path` and pass its path

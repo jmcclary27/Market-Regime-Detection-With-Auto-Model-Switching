@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
+import yaml
 
+from src.config.load_config import load_config
 from src.features.run_features import run as run_features
 from src.inference.batch_predict import run_stage
 from src.models.train import Config as TrainConfig
@@ -18,6 +21,7 @@ from src.registry.registry import ActiveModelRef, write_active
 
 DEMO_TIMESTAMP = "20240131_160000Z"
 DEMO_SYMBOLS = ("SPY", "QQQ")
+SETTINGS_PATH = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
 
 
 def build_demo_bars(rows: int = 420) -> pd.DataFrame:
@@ -49,14 +53,34 @@ def build_demo_bars(rows: int = 420) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True)
 
 
+def _write_demo_config(path: Path) -> Path:
+    """Write an offline configuration that never needs unpublished HMM artifacts."""
+    config: dict[str, Any] = load_config(SETTINGS_PATH)
+    regimes = dict(config.get("regimes", {}))
+    regimes["method"] = "rules"
+    config["regimes"] = regimes
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    return path
+
+
 def run() -> dict[str, Path]:
     """Generate data, publish a local baseline, and run active-model inference."""
     raw_path = Path("data/raw/demo_bars.csv")
     raw_path.parent.mkdir(parents=True, exist_ok=True)
     build_demo_bars().to_csv(raw_path, index=False)
+    config_path = _write_demo_config(Path("data/demo_settings.yaml"))
 
-    features_path, manifest_path = run_features(input_path=raw_path, timestamp=DEMO_TIMESTAMP)
-    regimes_path = run_regimes(input_path=features_path, timestamp=DEMO_TIMESTAMP)
+    features_path, manifest_path = run_features(
+        input_path=raw_path,
+        timestamp=DEMO_TIMESTAMP,
+        config_path=SETTINGS_PATH,
+    )
+    regimes_path = run_regimes(
+        input_path=features_path,
+        timestamp=DEMO_TIMESTAMP,
+        config_path=config_path,
+    )
 
     train_baseline(
         TrainConfig(

@@ -290,8 +290,14 @@ Local quality gates (same as CI):
 ruff check .
 ruff format --check .
 mypy src tests
-pytest -q
+pytest -q -m 'not integration'
+pytest -q -m integration
 ```
+
+The integration command runs the deterministic offline demo from empty working
+directories; it does not require local `data/`, `models/`, `registry/`, or
+`mlruns/` state. See [`docs/test-audit.md`](docs/test-audit.md) for the test
+coverage map and fixture policy.
 
 ### Data and model versioning (DVC)
 
