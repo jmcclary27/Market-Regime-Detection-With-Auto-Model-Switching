@@ -51,13 +51,16 @@ pretend are already installed:
    documented; GitHub-triggered implementation is not yet enabled.
 3. Strong deterministic CI — the current CI is the required baseline; expand
    gates deliberately and keep them reproducible.
-4. Codex PR reviewer — not yet enabled.
+4. Codex PR reviewer — implemented as a read-only, same-repository PR workflow
+   that posts advisory findings; it cannot modify repository contents, merge, or
+   deploy.
 5. Verification agent — not yet enabled.
 6. Market-Regime MCP — not yet enabled. Current agents use checked-in code and
    local artifacts instead.
 7. Runtime-aware review — telemetry is collected locally/from saved artifacts,
    but no production telemetry connector is configured.
-8. GitHub-triggered workflows — not yet enabled.
+8. GitHub-triggered implementation workflows — not yet enabled. The read-only
+   reviewer is the sole GitHub-triggered agent workflow currently enabled.
 
 When implementing a future phase, update `docs/agentic-development.md` and
 this status list in the same change. Never describe a planned connector,
