@@ -40,11 +40,11 @@ execute trading, merge code, or bypass a quality gate.
 | 1 | Repository instructions and Codex CLI context | In place | Root and scoped agent guidance are current. |
 | 2 | Issue -> branch -> PR implementation loop | Contract in place | Structured issue/PR templates; authenticated automation still pending. |
 | 3 | Strong deterministic CI | Baseline in place | `.github/workflows/CI.yml` passes secret scan, Docker checks, tests, and replay/integration gates. |
-| 4 | Codex PR reviewer | Planned | A read-only reviewer posts findings tied to changed files and architecture rules. |
-| 5 | Verification agent | Planned | An independent verifier maps every acceptance criterion to evidence. |
+| 4 | Codex PR reviewer | Implemented | `.github/workflows/codex-pr-review.yml` posts advisory, read-only findings for eligible PRs. |
+| 5 | Verification agent | Implemented | `.github/workflows/requirement-verification.yml` posts one advisory, post-CI requirement-verification report for eligible same-repository PRs. |
 | 6 | Market-Regime MCP | Planned | A bounded, read-only connector passes schema, auth, redaction, timeout, and fixture tests. |
 | 7 | Runtime-aware review | Partial foundation | Local metrics exist; approved production telemetry source is still pending. |
-| 8 | GitHub-triggered workflows | Planned | Permissions, approvals, retries, idempotency, and audit trail are tested end to end. |
+| 8 | GitHub-triggered implementation workflows | Planned | Issue-to-PR automation, approvals, retries, and audit trail are not enabled. The Phase 4 reviewer and Phase 5 verifier are advisory-only GitHub-triggered workflows; neither implements issues. |
 
 ## Current evidence surfaces
 
@@ -77,18 +77,72 @@ side-effect of testing.
 
 ### PR reviewer agent
 
-The reviewer is read-only. It checks architecture boundaries, leakage,
-determinism, model safety, artifact provenance, error handling, permissions,
-and documentation. Findings should include severity, file/line, why it
-matters, and a concrete remediation. It should not rewrite code or dismiss a
-failure because a broad test suite passes.
+The Phase 4 reviewer runs on non-draft pull requests from branches in this
+repository when they are opened, reopened, marked ready for review, or updated.
+Fork pull requests are skipped: Codex is not invoked and the OpenAI API key is
+never exposed to fork-controlled code. The workflow uses `pull_request_target`
+so its workflow definition comes from the default branch, then checks
+out GitHub's eligible pull request merge commit only for read-only inspection.
+
+Codex receives `contents: read`, its `:read-only` permission profile, and a
+privilege-drop safety strategy. It does not run project code or tests, install
+dependencies, access an MCP service, modify files, commit, push, merge, deploy,
+or access production telemetry. A separate fresh job has only `issues: write`
+to create or update one advisory PR comment; it has no repository-content write
+permission. The comment is replaced on subsequent eligible runs so retries and
+new commits do not create comment spam.
+
+The reviewer checks architecture boundaries, leakage, determinism, model safety,
+artifact provenance, error handling, permissions, documentation, and the
+software, ML/data, trading/simulation, and configuration risks described in its
+checked-in policy. It treats PR-provided files and metadata as untrusted input.
+Its findings use `BLOCKING`, `IMPORTANT`, and `SUGGESTION`, each with a path
+when applicable, why it matters, and a recommended fix. It explicitly reports
+`No material issues found` when no material issue is identified.
+
+The workflow fails without publishing a success-like comment if Codex fails or
+returns no review. It is advisory: human review and deterministic CI remain
+authoritative, and a lack of findings is not approval to merge or deploy. To
+enable it, add the `OPENAI_API_KEY` GitHub Actions secret and allow the
+workflow's scoped `issues: write` token permission in repository Actions
+settings. Disable it by removing the secret or disabling
+`.github/workflows/codex-pr-review.yml`.
 
 ### Verification agent
 
-The verifier starts from the issue, not the implementation summary. For every
-acceptance criterion it records `verified`, `not verified`, or `blocked`, with
-independent evidence. It should check negative paths, generated outputs,
-schemas, and the actual CI job that protects the behavior.
+The Phase 5 verifier runs after a completed `CI` workflow for a non-draft PR
+whose head branch belongs to this repository. It starts from the linked issue,
+not the implementation summary, and assesses every explicit checklist item
+under `## Acceptance criteria`. Each item retains the issue's wording and has
+separate implementation, test/CI, and assumptions evidence. Status is `PASS`,
+`FAIL`, or `UNVERIFIED`; the overall result is `PASS` only when every material
+criterion is supported. Failed CI is still evidence, so the verifier runs after
+both successful and failed CI runs.
+
+The PR must close exactly one same-repository issue. The workflow first uses
+GitHub's closing-issue relationship, then deterministically parses `Closes`,
+`Fixes`, or `Resolves` references in `#123`, `owner/repo#123`, or same-repo
+issue-URL form. No link, a cross-repository-only reference, multiple plausible
+issues, stale CI evidence, or a missing explicit checklist produces an advisory
+`UNVERIFIED` comment; it never guesses an issue. Fork and draft PRs are skipped
+before the job that can receive `OPENAI_API_KEY`.
+
+The verifier checks out the PR merge commit only for inspection and does not run
+tests, install dependencies, modify state, commit, push, merge, deploy, or
+access production telemetry. It receives only `contents: read`,
+`pull-requests: read`, `issues: read`, and `actions: read`. A fresh publishing
+job has only `issues: write` and updates one marker-tagged PR comment, making
+retries idempotent. The report is advisory: deterministic CI and human review
+remain authoritative, and the LLM can only assess available evidence. Missing,
+ambiguous, or unavailable evidence is explicitly `UNVERIFIED`.
+
+This is distinct from the Phase 4 reviewer, which looks for technical,
+architecture, safety, and code-quality risks. The verifier does not add generic
+review findings; it answers whether stated issue requirements have evidence.
+To enable it, configure the `OPENAI_API_KEY` Actions secret and allow the
+workflow's scoped token permissions. Disable it by removing the secret or
+disabling `.github/workflows/requirement-verification.yml`. It does not create
+branches or PRs, so Phase 8 issue-to-PR automation remains out of scope.
 
 ### Runtime-aware reviewer
 
@@ -126,8 +180,10 @@ The eventual GitHub-triggered flow should be idempotent and permission-minimal:
    unsupported external side effect.
 3. The agent creates or reuses a dedicated branch and records the issue ID.
 4. The implementation agent edits only the repository and opens a PR.
-5. CI runs on the PR. Reviewer and verifier agents receive the diff, issue,
-   test results, and allowed runtime snapshot.
+5. CI runs on the PR. The reviewer receives the diff and repository context;
+   the separate verifier receives one linked issue plus deterministic CI
+   evidence after CI completes; a future runtime-aware reviewer may receive an
+   approved runtime snapshot.
 6. A human approval gate is required before merge or deployment.
 7. Every retry uses an idempotency key and updates the same run/PR record rather
    than creating duplicate branches, comments, or deployments.
@@ -141,8 +197,8 @@ logs, artifact retention, and explicit handling for stale issue or PR state.
 Do not enable the next phase until the prior phase is observable and reversible.
 
 - Before Phase 4: CI is required and branch protection prevents bypassing it.
-- Before Phase 5: reviewer findings and verifier results are stored as distinct
-  statuses; neither agent can merge.
+- Phase 5 is enabled: reviewer findings and verifier results are distinct
+  advisory PR comments; neither agent can merge.
 - Before Phase 6: MCP responses are read-only, redacted, provenance-bearing,
   timeout-bounded, and tested with stale/missing data.
 - Before Phase 7: telemetry freshness and production-vs-local provenance are
@@ -156,8 +212,6 @@ The following should become separate issues rather than being hidden in a
 large automation change:
 
 - Define protected-branch requirements and required CI status names.
-- Add a read-only PR reviewer runner with a stable finding schema.
-- Add an independent acceptance-criteria verifier.
 - Define and implement the Market-Regime MCP contract and fixtures.
 - Choose an approved production telemetry source and retention/freshness SLO.
 - Add GitHub workflow idempotency, permissions, approvals, and audit storage.
