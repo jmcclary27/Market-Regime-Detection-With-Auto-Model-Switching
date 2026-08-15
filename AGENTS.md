@@ -54,13 +54,17 @@ pretend are already installed:
 4. Codex PR reviewer — implemented as a read-only, same-repository PR workflow
    that posts advisory findings; it cannot modify repository contents, merge, or
    deploy.
-5. Verification agent — not yet enabled.
+5. Verification agent — implemented as a separate, advisory, same-repository
+   post-CI workflow. It maps one reliably linked issue's explicit acceptance
+   criteria to available implementation and CI evidence; it cannot modify
+   repository contents, merge, deploy, or change an issue.
 6. Market-Regime MCP — not yet enabled. Current agents use checked-in code and
    local artifacts instead.
 7. Runtime-aware review — telemetry is collected locally/from saved artifacts,
    but no production telemetry connector is configured.
 8. GitHub-triggered implementation workflows — not yet enabled. The read-only
-   reviewer is the sole GitHub-triggered agent workflow currently enabled.
+   reviewer and advisory verifier are the only GitHub-triggered agent workflows
+   currently enabled; neither implements issues or changes repository state.
 
 When implementing a future phase, update `docs/agentic-development.md` and
 this status list in the same change. Never describe a planned connector,
@@ -279,9 +283,13 @@ A future PR reviewer agent should be read-only and should evaluate:
 5. Are telemetry, lineage, schema, and documentation updated where required?
 6. Does CI exercise the same path a developer claims to have validated?
 
-A separate verification agent should independently trace acceptance criteria to
-tests and observable outputs. It should not trust the implementation's own
-summary. For runtime claims, it should distinguish:
+The Phase 5 verification agent independently traces a reliably linked issue's
+explicit acceptance criteria to implementation and CI evidence after CI
+completes. It does not trust the implementation's own summary, is advisory, and
+reports `PASS`, `FAIL`, or `UNVERIFIED` rather than blocking merges. It skips
+forks and drafts before the OpenAI key is available; no or ambiguous linkage
+produces one `UNVERIFIED` PR comment instead of a guess. For runtime claims, it
+should distinguish:
 
 - static evidence: source, tests, manifests, and CI results;
 - local evidence: saved pipeline telemetry, replay audits, drift, deployment,
