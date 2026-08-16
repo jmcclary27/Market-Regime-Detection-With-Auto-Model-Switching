@@ -47,8 +47,9 @@ pretend are already installed:
 
 1. Root instructions and Codex CLI context — implemented by this file and the
    scoped guidance files.
-2. Issue -> agent implementation -> branch -> PR — templates and contracts are
-   documented; GitHub-triggered implementation is not yet enabled.
+2. Issue -> agent implementation -> branch -> PR — implemented as a
+   maintainer-dispatched workflow that creates one dedicated branch and pull
+   request after validation; it never merges or deploys.
 3. Strong deterministic CI — the current CI is the required baseline; expand
    gates deliberately and keep them reproducible.
 4. Codex PR reviewer — implemented as a read-only, same-repository PR workflow
@@ -62,9 +63,11 @@ pretend are already installed:
    local artifacts instead.
 7. Runtime-aware review — telemetry is collected locally/from saved artifacts,
    but no production telemetry connector is configured.
-8. GitHub-triggered implementation workflows — not yet enabled. The read-only
-   reviewer and advisory verifier are the only GitHub-triggered agent workflows
-   currently enabled; neither implements issues or changes repository state.
+8. GitHub-triggered implementation workflows — a controlled manual-dispatch
+   developer-agent workflow is enabled. It validates an open issue with
+   explicit acceptance criteria, runs Codex without a publishing credential,
+   and uses a fresh publish-only job to create one branch and PR. The read-only
+   reviewer and advisory verifier remain separate and cannot implement issues.
 
 When implementing a future phase, update `docs/agentic-development.md` and
 this status list in the same change. Never describe a planned connector,
@@ -261,7 +264,9 @@ For each implementation task:
 - Keep generated artifacts, credentials, and local runtime state out of the
   branch unless the issue specifically changes a checked-in fixture or schema.
 - Do not push, open, merge, approve, or comment on a PR unless the user/task
-  explicitly authorizes that external action.
+  explicitly authorizes that external action. The maintainer-dispatched
+  `Codex issue implementation` workflow is the explicit authorization for its
+  one issue-linked branch and PR only.
 - A PR is not complete because tests pass: it must also explain architectural
   impact, data/model contract impact, runtime/telemetry impact, rollback, and
   any unimplemented future-phase dependency.
