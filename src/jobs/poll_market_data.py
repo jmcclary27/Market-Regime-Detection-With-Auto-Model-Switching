@@ -42,9 +42,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument(
         "--symbols", default=None, help="Comma-separated, default uses cfg market.symbols[:2]"
     )
+    p.add_argument("--config", type=Path, default=None, help="Optional settings YAML path.")
     args = p.parse_args(list(argv) if argv is not None else None)
 
-    cfg = load_config()
+    cfg = load_config(args.config)
 
     if args.symbols:
         symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]

@@ -380,7 +380,9 @@ def run(cfg: TrainConfig) -> Path:
     test_m = cast(SplitMetrics, metrics["test"])
     val_m = cast(SplitMetrics | None, metrics["val"])
 
-    with mlflow.start_run(run_name=f"baseline_features_only_{run_ts}") as _r:
+    with mlflow.start_run(
+        run_name=f"baseline_features_only_{run_ts}", nested=mlflow.active_run() is not None
+    ) as _r:
         mlflow.log_param("features_path", str(cfg.features_path))
         mlflow.log_param("ridge_alpha", float(cfg.ridge_alpha))
         mlflow.log_param("n_features", int(len(feature_cols)))

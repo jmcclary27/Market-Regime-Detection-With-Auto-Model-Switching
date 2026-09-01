@@ -39,8 +39,8 @@ architecture:
   snapshots, replay audits, deployment history, and project-metrics reports.
 - The local registry and switcher provide explicit active-model pointers,
   guarded promotion/rollback decisions, and history.
-- DVC describes the reproducible data pipeline, but DVC and cloud storage are
-  optional for the offline demo.
+- DVC provides an optional, deterministic offline wrapper around the canonical
+  pipeline runner; it is not a second stage-by-stage orchestrator.
 
 The following phases are architectural targets, not capabilities an agent may
 pretend are already installed:

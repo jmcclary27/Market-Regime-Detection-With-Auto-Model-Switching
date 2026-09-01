@@ -20,7 +20,7 @@ inputs unless a test creates them under `tmp_path`.
 | `test_drift_monitoring`, `test_replay_audit`, `test_project_metrics` | Monitoring and reporting | Deterministic telemetry, drift/reference filtering, replay evidence, and report outputs. |
 | `test_experiment`, `test_freeze_experiment`, `test_live_sim`, `test_trading_accounting`, `test_lambda_live_sim` | Paper trading and frozen experiment | Frozen artifacts, next-bar fills, accounting, idempotency, locks, and paper-only behavior. |
 | `test_lambda_inference_contract` | Lambda inference | Version/hash-scoped requests, bundle layout, safe extraction, and duplicate-event contracts. |
-| `test_pipeline_replay` | End-to-end offline demo | A deterministic demo from empty working directories with no ignored local inputs. |
+| `test_pipeline_replay`, `test_pipeline_offline` | End-to-end offline paths | Deterministic empty-directory demo coverage plus the canonical full pipeline through evaluation, promotion hold, lineage, and telemetry. |
 
 ## Findings and controls
 

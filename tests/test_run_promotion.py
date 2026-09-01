@@ -227,3 +227,36 @@ def test_run_promotion_blocks_flat_candidate(tmp_path: Path) -> None:
     assert out["decision"]["promote"] is False
     assert "flat" in out["reason"] or "degenerate" in out["reason"]
     assert not (tmp_path / "registry" / "active_model.yaml").exists()
+
+
+def test_run_promotion_records_no_challenger_hold_at_explicit_paths(tmp_path: Path) -> None:
+    run_ts = "20260103_000000Z"
+    wf = pd.DataFrame(
+        {
+            "model_name": ["baseline"],
+            "fold_id": [0],
+            "sharpe": [0.5],
+            "max_drawdown": [-0.2],
+        }
+    )
+    _write_promotion_inputs(tmp_path, run_ts=run_ts, wf=wf)
+
+    out = run_promotion(
+        challenger_model_name=None,
+        incumbent_model_name="baseline",
+        challenger_ref=_dummy_ref(),
+        lineage_path=tmp_path / "artifacts" / "lineage" / "latest.json",
+        project_root=tmp_path,
+        data_dir=tmp_path / "data",
+        walkforward_dir=tmp_path / "data" / "walkforward",
+        predictions_path=tmp_path / "data" / "predictions" / "latest.parquet",
+        deployment_events_path=tmp_path / "data" / "deployments" / "events.parquet",
+        registry_path=tmp_path / "registry" / "active_model.yaml",
+    )
+
+    assert out["promoted"] is False
+    assert out["reason"] == "no_promotable_challenger"
+    assert (tmp_path / "data" / "walkforward" / f"promotion_{run_ts}.json").exists()
+    events = pd.read_parquet(tmp_path / "data" / "deployments" / "events.parquet")
+    assert events.iloc[-1]["decision"] == "hold"
+    assert not (tmp_path / "registry" / "active_model.yaml").exists()
