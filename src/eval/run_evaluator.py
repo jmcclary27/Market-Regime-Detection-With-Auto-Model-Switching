@@ -160,6 +160,11 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--target-col", default="log_return_1")
     ap.add_argument("--min-regime-n", type=int, default=30)
     ap.add_argument("--out-dir", default="data/scorecards")
+    ap.add_argument(
+        "--walkforward-out-dir",
+        default="data/walkforward",
+        help="Directory for walk-forward portfolio metrics. Default: data/walkforward",
+    )
 
     # ---- walk-forward options ----
     ap.add_argument(
@@ -347,7 +352,7 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Wrote: {wf_csv}")
 
     # ---- portfolio metrics artifact for promotion (PR14) ----
-    wf_port_out_dir = Path("data/walkforward")
+    wf_port_out_dir = Path(args.walkforward_out_dir)
     wf_port_out_dir.mkdir(parents=True, exist_ok=True)
 
     wf_port = pd.DataFrame(wf_port_rows)

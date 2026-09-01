@@ -12,8 +12,9 @@ DEFAULT_ARGS = {
 }
 
 
-def _cmd(module: str, extra: str = "") -> str:
-    return f"cd /opt/project && python -m {module} {extra}".strip()
+def _cmd(extra: str = "") -> str:
+    """Run the single canonical pipeline entrypoint from the baked project root."""
+    return f"cd /opt/project && python -m src.pipeline.run {extra}".strip()
 
 
 with DAG(
@@ -29,8 +30,5 @@ with DAG(
 
     BashOperator(
         task_id="run_pipeline",
-        bash_command=_cmd(
-            "src.pipeline.run",
-            f'--run-ts "{run_ts}"',
-        ),
+        bash_command=_cmd(f'--run-ts "{run_ts}"'),
     )

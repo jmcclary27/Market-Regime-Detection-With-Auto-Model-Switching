@@ -50,8 +50,14 @@ python -m src.features.run_features --input <bars.csv|bars.parquet> --timestamp 
 python -m src.regimes.run_regime_detection --input <features.parquet> --timestamp <timestamp>
 ```
 
-The live poll and full pipeline use external market data; the offline demo is
-the recommended presentation path.
+The live poll and normal pipeline use external market data. The canonical
+pipeline also has a deterministic offline mode that runs every pipeline stage,
+including evaluation, walk-forward artifacts, guarded promotion, lineage, and
+telemetry, without HMM artifacts or network access:
+
+```bash
+python -m src.pipeline.run --offline --run-ts 20260203_120000Z
+```
 
 ## Run Machine Learning Parts
 
@@ -243,18 +249,22 @@ programmatic `run(...)` APIs.
 
 Running the pipeline will execute, in order:
 
-1. **poll** , fetch raw market bars
+1. **poll** , fetch market bars (or write deterministic bars in `--offline` mode)
 2. **features** , build deterministic features + manifest
-3. **regimes** , label regimes using rule-based logic
-4. **predict** , run batch inference (active + shadow predictions)
-5. **eval** , generate scorecards from predictions
-6. **switch** , select / switch the active model from evaluation results
+3. **regimes** , label regimes
+4. **predict** , run active and shadow inference
+5. **eval** , generate scorecards and walk-forward metrics
+6. **promotion** , record a guarded promotion or safe hold, then preserve deployment history
 
 ### Run it
 
 ```bash
 python -m src.pipeline.run -v
 ```
+
+Use `--offline` for the full deterministic smoke path. It bootstraps only a
+local baseline, runs rules-based regimes, and records a `no_promotable_challenger`
+hold rather than changing the active model during promotion.
 
 To opt into an S3 bootstrap, set `ARTIFACT_BUCKET` and use the cloud override:
 
@@ -307,8 +317,12 @@ S3 remote. It is optional and is not needed for the local demo.
 - Pull tracked data/model artifacts:
   `dvc pull`
 
-- Reproduce the configured pipeline:
-  `dvc repro`
+- Run the deterministic canonical pipeline wrapper:
+  `dvc repro offline_pipeline`
+
+The DVC stage deliberately has no cached runtime outputs and is always run.
+The canonical orchestrator is `src.pipeline.run`; DVC is an optional invocation
+and versioning helper rather than a second stage graph.
 
 - After generating new artifacts:
   `dvc push`

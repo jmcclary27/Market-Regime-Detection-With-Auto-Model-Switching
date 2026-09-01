@@ -57,7 +57,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
-def _lineage_features_path(lineage: dict[str, Any]) -> Path | None:
+def _lineage_features_path(lineage: dict[str, Any], *, project_root: Path) -> Path | None:
     artifacts = lineage.get("artifacts")
     if not isinstance(artifacts, dict):
         return None
@@ -67,15 +67,16 @@ def _lineage_features_path(lineage: dict[str, Any]) -> Path | None:
     path = features.get("path")
     if path in (None, ""):
         return None
-    return Path(str(path))
+    resolved = Path(str(path))
+    return resolved if resolved.is_absolute() else project_root / resolved
 
 
-def _portfolio_metrics_path_for_run(run_ts: str) -> Path:
-    return Path("data/walkforward") / f"portfolio_metrics_{run_ts}.parquet"
+def _portfolio_metrics_path_for_run(run_ts: str, *, walkforward_dir: Path) -> Path:
+    return walkforward_dir / f"portfolio_metrics_{run_ts}.parquet"
 
 
-def _promotion_out_path_for_run(run_ts: str) -> Path:
-    return Path("data/walkforward") / f"promotion_{run_ts}.json"
+def _promotion_out_path_for_run(run_ts: str, *, walkforward_dir: Path) -> Path:
+    return walkforward_dir / f"promotion_{run_ts}.json"
 
 
 def _choose_incumbent(wf: pd.DataFrame, preferred: str | None) -> str:
@@ -193,6 +194,12 @@ def run_promotion(
     cfg: PromotionConfig | None = None,
     lineage_path: Path = LINEAGE_LATEST,
     write_pointer: bool = True,
+    project_root: Path | None = None,
+    data_dir: Path | None = None,
+    walkforward_dir: Path | None = None,
+    predictions_path: Path | None = None,
+    deployment_events_path: Path | None = None,
+    registry_path: Path | None = None,
 ) -> dict[str, Any]:
     """
     Read latest lineage -> find walkforward portfolio metrics parquet -> decide promotion.
@@ -206,12 +213,27 @@ def run_promotion(
     if not lineage_path.exists():
         raise FileNotFoundError(f"lineage not found: {lineage_path}")
 
+    root = (
+        project_root.resolve()
+        if project_root is not None
+        else lineage_path.resolve().parent.parent.parent
+    )
+    resolved_data_dir = (data_dir or root / "data").resolve()
+    resolved_walkforward_dir = (walkforward_dir or resolved_data_dir / "walkforward").resolve()
+    resolved_predictions_path = (
+        predictions_path or resolved_data_dir / "predictions/latest.parquet"
+    ).resolve()
+    resolved_deployment_events_path = (
+        deployment_events_path or resolved_data_dir / "deployments/events.parquet"
+    ).resolve()
+    resolved_registry_path = (registry_path or root / "registry/active_model.yaml").resolve()
+
     lineage = _read_json(lineage_path)
     run_ts = str(lineage.get("run_ts", "")).strip()
     if not run_ts:
         raise ValueError("lineage missing run_ts")
 
-    wf_path = _portfolio_metrics_path_for_run(run_ts)
+    wf_path = _portfolio_metrics_path_for_run(run_ts, walkforward_dir=resolved_walkforward_dir)
     if not wf_path.exists():
         raise FileNotFoundError(f"walk-forward portfolio metrics missing: {wf_path}")
 
@@ -235,7 +257,68 @@ def run_promotion(
 
     # ---- robust model selection ----
     incumbent = _choose_incumbent(wf, preferred=incumbent_model_name)
-    challenger = _choose_challenger(wf, incumbent=incumbent, preferred=challenger_model_name)
+    try:
+        challenger = _choose_challenger(wf, incumbent=incumbent, preferred=challenger_model_name)
+    except ValueError as exc:
+        if not str(exc).startswith("no challenger candidates"):
+            raise
+
+        reason = "no_promotable_challenger"
+        event_ts = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        hold_out: dict[str, Any] = {
+            "run_ts": run_ts,
+            "git_commit": lineage.get("git_commit"),
+            "config_sha256": lineage.get("config_sha256"),
+            "challenger_model_name": None,
+            "incumbent_model_name": incumbent,
+            "promoted": False,
+            "reason": reason,
+            "pointer_written": False,
+            "raw_decision": None,
+            "resolved_challenger_ref": None,
+            "promotion_guard": None,
+            "passed_challenger_ref": {
+                "model_type": challenger_ref.model_type,
+                "model_id": challenger_ref.model_id,
+                "version": challenger_ref.version,
+                "artifact_path": challenger_ref.artifact_path.as_posix(),
+                "regime": challenger_ref.regime,
+                "metadata_path": challenger_ref.metadata_path.as_posix()
+                if challenger_ref.metadata_path is not None
+                else None,
+            },
+            "decision": {"promote": False, "reason": reason, "challenger": {}, "incumbent": {}},
+            "promotion_config": asdict(cfg),
+            "inputs": {
+                "walkforward_metrics": str(wf_path),
+                "lineage": str(lineage_path),
+                "predictions_latest": str(resolved_predictions_path),
+            },
+            "available_models": available_models,
+            "promotable_models": promotable_models,
+            "non_promotable_models": list(NON_PROMOTABLE_MODEL_RULES),
+        }
+        out_path = _promotion_out_path_for_run(run_ts, walkforward_dir=resolved_walkforward_dir)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(hold_out, indent=2, sort_keys=True), encoding="utf-8")
+        latest_path = resolved_walkforward_dir / "latest_promotion.json"
+        latest_path.write_text(json.dumps(hold_out, indent=2, sort_keys=True), encoding="utf-8")
+        append_deployment_event(
+            resolved_deployment_events_path,
+            {
+                "ts": event_ts,
+                "run_ts": run_ts,
+                "source": "run_promotion",
+                "event_type": "hold",
+                "decision": "hold",
+                "active_model_id_before": incumbent,
+                "candidate_model_id": None,
+                "active_model_id_after": incumbent,
+                "pointer_written": False,
+                "reason": reason,
+            },
+        )
+        return hold_out
 
     LOG.info(
         "Promotion selected | incumbent=%s (preferred=%s) challenger=%s (preferred=%s)",
@@ -246,9 +329,9 @@ def run_promotion(
     )
 
     # Resolve the actually-selected challenger to an artifact path (source of truth: predictions)
-    preds_path = Path("data/predictions/latest.parquet")
+    preds_path = resolved_predictions_path
     resolved_ref = _resolve_ref_from_predictions(challenger, preds_path)
-    lineage_features_path = _lineage_features_path(lineage)
+    lineage_features_path = _lineage_features_path(lineage, project_root=root)
 
     # Summaries + decision
     chal = summarize_walkforward(wf, model_name=challenger, cfg=cfg)
@@ -279,11 +362,7 @@ def run_promotion(
             )
 
     # A short, human-friendly reason string for logs + top-level output
-    reason = getattr(decision, "reason", None)
-    if reason is None:
-        reason = getattr(decision, "message", None)
-    if reason is None:
-        reason = "see decision object"
+    reason = decision.reason
 
     promoted = bool(getattr(decision, "promote", False))
     event_type = "promoted" if promoted else "hold"
@@ -342,11 +421,11 @@ def run_promotion(
         "non_promotable_models": list(NON_PROMOTABLE_MODEL_RULES),
     }
 
-    out_path = _promotion_out_path_for_run(run_ts)
+    out_path = _promotion_out_path_for_run(run_ts, walkforward_dir=resolved_walkforward_dir)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
 
-    latest_path = Path("data/walkforward/latest_promotion.json")
+    latest_path = resolved_walkforward_dir / "latest_promotion.json"
     latest_path.parent.mkdir(parents=True, exist_ok=True)
     latest_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
 
@@ -362,6 +441,7 @@ def run_promotion(
         )
         pointer_written = write_active(
             resolved_ref,
+            active_file=resolved_registry_path,
             event_context={
                 "source": "run_promotion",
                 "run_ts": run_ts,
@@ -382,7 +462,7 @@ def run_promotion(
     latest_path.write_text(json.dumps(out, indent=2, sort_keys=True), encoding="utf-8")
 
     append_deployment_event(
-        Path("data/deployments/events.parquet"),
+        resolved_deployment_events_path,
         {
             "ts": event_ts,
             "run_ts": run_ts,

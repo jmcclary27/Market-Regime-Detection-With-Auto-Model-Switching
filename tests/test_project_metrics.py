@@ -733,9 +733,9 @@ def test_generate_project_metrics_is_deterministic(tmp_path: Path) -> None:
     assert first_md == second_md
 
 
-def test_report_metrics_stage_declared_in_dvc_yaml() -> None:
+def test_canonical_offline_pipeline_stage_declared_in_dvc_yaml() -> None:
     repo_root = Path(__file__).resolve().parents[1]
     text = (repo_root / "dvc.yaml").read_text(encoding="utf-8")
-    assert "report_metrics:" in text
-    assert "tools/collect_project_metrics.py" in text
-    assert "data/reporting" in text
+    assert "offline_pipeline:" in text
+    assert "python -m src.pipeline.run --offline" in text
+    assert "always_changed: true" in text

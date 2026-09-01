@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import pandas as pd
+import yaml
 
 from src.config.load_config import load_config
 from src.ingestion.quality import audit_raw_bars, default_audit_output
@@ -46,6 +47,7 @@ class PipelineConfig:
     data_dir: Path
     run_ts: str
     mode: PipelineMode
+    offline: bool = False
 
 
 def utc_timestamp() -> str:
@@ -87,7 +89,45 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
     data_dir = Path(os.environ.get("DATA_DIR", str(project_root / "data"))).resolve()
     run_ts = args.run_ts or os.environ.get("RUN_TS") or utc_timestamp()
     mode: PipelineMode = args.mode
-    return PipelineConfig(project_root=project_root, data_dir=data_dir, run_ts=run_ts, mode=mode)
+    return PipelineConfig(
+        project_root=project_root,
+        data_dir=data_dir,
+        run_ts=run_ts,
+        mode=mode,
+        offline=bool(args.offline),
+    )
+
+
+def _write_runtime_settings(cfg: PipelineConfig) -> Path:
+    """Create a root-aware settings file for one pipeline invocation."""
+    source_path = Path(__file__).resolve().parents[1] / "config" / "settings.yaml"
+    settings = yaml.safe_load(source_path.read_text(encoding="utf-8"))
+    if not isinstance(settings, dict):
+        raise ValueError(f"Expected a settings mapping in {source_path}")
+
+    data = dict(settings.get("data", {}))
+    data.update(
+        {
+            "raw_path": str(cfg.data_dir / "raw"),
+            "processed_path": str(cfg.data_dir / "processed"),
+            "features_path": str(cfg.data_dir / "features"),
+            "regimes_path": str(cfg.data_dir / "regimes"),
+        }
+    )
+    settings["data"] = data
+
+    regimes = dict(settings.get("regimes", {}))
+    hmm = dict(regimes.get("hmm", {}))
+    hmm["artifacts_dir"] = str(cfg.project_root / "models" / "regimes" / "hmm")
+    regimes["hmm"] = hmm
+    if cfg.offline:
+        regimes["method"] = "rules"
+    settings["regimes"] = regimes
+
+    output_path = cfg.data_dir / "pipeline_settings" / f"settings_{cfg.run_ts}.yaml"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(yaml.safe_dump(settings, sort_keys=False), encoding="utf-8")
+    return output_path
 
 
 def latest_raw_file(raw_dir: Path) -> Path:
@@ -135,8 +175,9 @@ def _read_json(path: Path) -> dict[str, Any]:
     return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
 
 
-def _run_record_for_output(project_root: Path, raw_path: Path) -> dict[str, Any] | None:
-    runs_dir = project_root / "data" / "runs"
+def _run_record_for_output(
+    project_root: Path, runs_dir: Path, raw_path: Path
+) -> dict[str, Any] | None:
     if not runs_dir.exists():
         return None
 
@@ -165,10 +206,20 @@ def _run_record_for_output(project_root: Path, raw_path: Path) -> dict[str, Any]
 def run_pipeline(
     cfg: PipelineConfig, *, replay: bool = False, replay_ts: str | None = None
 ) -> None:
-    LOG.info("Pipeline run started, run_ts=%s mode=%s replay=%s", cfg.run_ts, cfg.mode, replay)
+    LOG.info(
+        "Pipeline run started, run_ts=%s mode=%s replay=%s offline=%s",
+        cfg.run_ts,
+        cfg.mode,
+        replay,
+        cfg.offline,
+    )
+    if replay and cfg.offline:
+        raise ValueError("--offline and --replay cannot be used together")
 
     replay_subject_run_ts = replay_ts or cfg.run_ts
     replay_stem = f"replay_{replay_subject_run_ts}"
+    settings_path = _write_runtime_settings(cfg)
+    settings = load_config(settings_path)
     lineage: dict[str, Any] | None = None
     if replay:
         lineage = _load_lineage(cfg.project_root, replay_subject_run_ts)
@@ -187,6 +238,8 @@ def run_pipeline(
 
         mlflow_obj = _mlflow
         if mlflow_obj.active_run() is None:
+            os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
+            os.environ.setdefault("MLFLOW_TRACKING_URI", (cfg.project_root / "mlruns").as_uri())
             exp_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "pipeline")
             mlflow_obj.set_experiment(exp_name)
             mlflow_obj.start_run(run_name=f"pipeline_{cfg.run_ts}")
@@ -201,6 +254,7 @@ def run_pipeline(
     except Exception:
         LOG.exception("MLflow setup failed, continuing without MLflow")
 
+    from src.demo.run import build_demo_bars
     from src.features.run_features import run as features_run
     from src.inference.batch_predict import run_stage as predict_run
     from src.ingestion.run_ingestion import run as ingest_run
@@ -232,8 +286,7 @@ def run_pipeline(
         if predictions_parquet is None:
             raise RuntimeError("predictions_parquet not set")
 
-        config_path = cfg.project_root / "src" / "config" / "settings.yaml"
-        config_text = config_path.read_text(encoding="utf-8")
+        config_text = settings_path.read_text(encoding="utf-8")
 
         from src.data.lineage import write_run_lineage
 
@@ -257,7 +310,8 @@ def run_pipeline(
 
         params = {
             "mode": cfg.mode,
-            "market_symbols": load_config().get("market", {}).get("symbols", []),
+            "offline": cfg.offline,
+            "market_symbols": settings.get("market", {}).get("symbols", []),
         }
 
         out = write_run_lineage(
@@ -280,8 +334,18 @@ def run_pipeline(
     run_status = "completed"
     run_error: str | None = None
     try:
-        if not replay:
-            step("poll", ingest_run, recorder=recorder)
+        if not replay and cfg.offline:
+
+            def _offline_poll() -> None:
+                raw_dir = cfg.data_dir / "raw"
+                raw_dir.mkdir(parents=True, exist_ok=True)
+                raw_path = raw_dir / "offline_bars.csv"
+                build_demo_bars(rows=900).to_csv(raw_path, index=False)
+                (raw_dir / "latest.csv").write_bytes(raw_path.read_bytes())
+
+            step("poll", _offline_poll, recorder=recorder)
+        elif not replay:
+            step("poll", lambda: ingest_run(config_path=settings_path), recorder=recorder)
         else:
             LOG.info("Replay enabled, skipping poll step")
 
@@ -301,6 +365,7 @@ def run_pipeline(
             features_parquet, features_manifest = features_run(
                 input_path=raw_latest,
                 timestamp=cfg.run_ts,
+                config_path=settings_path,
                 output_stem=replay_stem if replay else None,
                 write_latest=not replay,
             )
@@ -319,8 +384,7 @@ def run_pipeline(
                 if raw_latest is None:
                     raise RuntimeError("raw_latest not set")
 
-                record = _run_record_for_output(cfg.project_root, raw_latest)
-                settings = load_config()
+                record = _run_record_for_output(cfg.project_root, cfg.data_dir / "runs", raw_latest)
                 symbols = cast(list[str], settings.get("market", {}).get("symbols", []))
                 interval = cast(str | None, settings.get("market", {}).get("frequency"))
                 if record is not None and record.get("interval") not in (None, ""):
@@ -359,6 +423,7 @@ def run_pipeline(
             regimes_parquet = regimes_run(
                 input_path=features_parquet,
                 timestamp=cfg.run_ts,
+                config_path=settings_path,
                 output_stem=replay_stem if replay else None,
                 write_latest=not replay,
             )
@@ -374,7 +439,24 @@ def run_pipeline(
                 if features_parquet is None:
                     raise RuntimeError("features_parquet not set")
 
-                settings = load_config()
+                if str(settings.get("regimes", {}).get("method", "rules")).lower() != "hmm":
+                    out_dir = cfg.project_root / "artifacts" / "regimes"
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    diag_path = out_dir / f"diagnostics_{cfg.run_ts}.json"
+                    diag_path.write_text(
+                        json.dumps(
+                            {
+                                "run_ts": cfg.run_ts,
+                                "status": "not_applicable",
+                                "reason": "regimes.method is not hmm",
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        ),
+                        encoding="utf-8",
+                    )
+                    LOG.info("Recorded non-HMM diagnostics status: %s", diag_path)
+                    return
                 df_features = pd.read_parquet(features_parquet)
                 diag = compute_hmm_diagnostics(df_features, cfg=settings, run_ts=cfg.run_ts)
 
@@ -408,6 +490,50 @@ def run_pipeline(
 
             step("regime_diagnostics", _regime_diagnostics, recorder=recorder)
 
+        if cfg.offline:
+
+            def _bootstrap_offline_baseline() -> None:
+                if features_parquet is None:
+                    raise RuntimeError("features_parquet not set")
+
+                from datetime import UTC, datetime
+
+                from src.models.train import Config as TrainConfig
+                from src.models.train import run as train_baseline
+                from src.registry.registry import ActiveModelRef, write_active
+
+                baseline_dir = cfg.project_root / "models" / "baseline"
+                train_baseline(
+                    TrainConfig(
+                        features_path=features_parquet,
+                        baseline_models_dir=baseline_dir,
+                        publish_latest=True,
+                        tracking_uri=(cfg.project_root / "mlruns").as_uri(),
+                        experiment_name="market-regime-offline-pipeline",
+                    )
+                )
+                write_active(
+                    ActiveModelRef(
+                        model_type="baseline",
+                        model_id="baseline_ridge",
+                        version="offline",
+                        artifact_path=baseline_dir / "latest.joblib",
+                        metadata_path=baseline_dir / "latest.json",
+                        updated_at=datetime.now(UTC)
+                        .replace(microsecond=0)
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                    ),
+                    active_file=cfg.project_root / "registry" / "active_model.yaml",
+                    event_context={
+                        "source": "pipeline_offline_bootstrap",
+                        "run_ts": cfg.run_ts,
+                        "reason": "deterministic offline baseline",
+                    },
+                )
+
+            step("offline_bootstrap", _bootstrap_offline_baseline, recorder=recorder)
+
         def _predict() -> None:
             nonlocal predictions_parquet
             if regimes_parquet is None:
@@ -419,6 +545,10 @@ def run_pipeline(
 
             predictions_parquet = predict_run(
                 features_path=regimes_parquet,
+                active_file=cfg.project_root / "registry" / "active_model.yaml",
+                models_dir=cfg.project_root / "models",
+                output_dir=cfg.data_dir / "predictions",
+                runs_dir=cfg.data_dir / "runs",
                 inference_ts=run_ts_to_int(replay_subject_run_ts if replay else cfg.run_ts),
                 output_name=(
                     f"predictions_replay_{replay_subject_run_ts}.parquet"
@@ -432,8 +562,10 @@ def run_pipeline(
                     else f"run_{cfg.run_ts}.json"
                 ),
                 record_features_path=recorded_features_path,
+                include_discovered_models=not cfg.offline,
             )
             if replay:
+                assert predictions_parquet is not None
                 replay_artifacts["predictions_parquet"] = predictions_parquet
 
         step("predict", _predict, recorder=recorder)
@@ -587,11 +719,15 @@ def run_pipeline(
 
                 argv = [
                     "--features",
-                    "data/features/latest.parquet",
+                    str(cfg.data_dir / "features" / "latest.parquet"),
                     "--regimes",
-                    "data/regimes/latest.parquet",
+                    str(cfg.data_dir / "regimes" / "latest.parquet"),
                     "--predictions",
-                    "data/predictions/latest.parquet",
+                    str(cfg.data_dir / "predictions" / "latest.parquet"),
+                    "--out-dir",
+                    str(cfg.data_dir / "scorecards"),
+                    "--walkforward-out-dir",
+                    str(cfg.data_dir / "walkforward"),
                     "--run-ts",
                     cfg.run_ts,
                     "--walk-forward",
@@ -615,10 +751,7 @@ def run_pipeline(
                 nonlocal wf_portfolio_metrics_parquet, promotion_decision_json
 
                 wf_portfolio_metrics_parquet = (
-                    cfg.project_root
-                    / "data"
-                    / "walkforward"
-                    / f"portfolio_metrics_{cfg.run_ts}.parquet"
+                    cfg.data_dir / "walkforward" / f"portfolio_metrics_{cfg.run_ts}.parquet"
                 )
                 if not wf_portfolio_metrics_parquet.exists():
                     raise FileNotFoundError(
@@ -630,12 +763,20 @@ def run_pipeline(
                 from src.models.run_promotion import run_promotion
                 from src.registry.registry import ActiveModelRef
 
-                challenger_model_name = os.getenv("PROMOTION_CHALLENGER_MODEL", "elasticnet_v0")
-                incumbent_model_name = os.getenv("PROMOTION_INCUMBENT_MODEL", "baseline")
+                challenger_model_name: str | None = os.getenv(
+                    "PROMOTION_CHALLENGER_MODEL", "elasticnet_v0"
+                )
+                incumbent_model_name: str | None = os.getenv(
+                    "PROMOTION_INCUMBENT_MODEL", "baseline"
+                )
+                if cfg.offline:
+                    challenger_model_name = None
 
                 challenger_ref = ActiveModelRef(
                     model_type=str(os.getenv("PROMOTION_CHALLENGER_TYPE", "pretrained")),
-                    model_id=str(os.getenv("PROMOTION_CHALLENGER_ID", challenger_model_name)),
+                    model_id=str(
+                        os.getenv("PROMOTION_CHALLENGER_ID", challenger_model_name or "offline")
+                    ),
                     version=str(os.getenv("PROMOTION_CHALLENGER_VERSION", "0")),
                     artifact_path=Path(
                         str(
@@ -653,10 +794,17 @@ def run_pipeline(
                     challenger_model_name=challenger_model_name,
                     incumbent_model_name=incumbent_model_name,
                     challenger_ref=challenger_ref,
+                    lineage_path=cfg.project_root / "artifacts" / "lineage" / "latest.json",
+                    project_root=cfg.project_root,
+                    data_dir=cfg.data_dir,
+                    walkforward_dir=cfg.data_dir / "walkforward",
+                    predictions_path=cfg.data_dir / "predictions" / "latest.parquet",
+                    deployment_events_path=cfg.data_dir / "deployments" / "events.parquet",
+                    registry_path=cfg.project_root / "registry" / "active_model.yaml",
                 )
 
                 promotion_decision_json = (
-                    cfg.project_root / "data" / "walkforward" / f"promotion_{cfg.run_ts}.json"
+                    cfg.data_dir / "walkforward" / f"promotion_{cfg.run_ts}.json"
                 )
                 if not promotion_decision_json.exists():
                     raise RuntimeError("promotion decision json was not written as expected")
@@ -757,6 +905,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Replay a prior run_ts using artifacts/lineage/lineage_<run_ts>.json",
     )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Run deterministic synthetic data with rules regimes and an offline baseline bootstrap.",
+    )
     return parser.parse_args(argv)
 
 
@@ -771,6 +924,7 @@ def main(argv: list[str] | None = None) -> int:
             data_dir=cfg.data_dir,
             run_ts=str(args.replay),
             mode="pipeline",
+            offline=cfg.offline,
         )
 
     run_pipeline(cfg, replay=bool(args.replay), replay_ts=args.replay)
