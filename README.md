@@ -42,6 +42,40 @@ pip install -r requirements.txt
 python -m src.demo.run
 ```
 
+## Local dashboard
+
+The dashboard is a local, read-only browser view over artifacts already written
+by the offline pipeline, evaluation, registry, and optional paper live
+simulation. It does not start a market-data poller, trading loop, inference
+job, or AWS service.
+
+Install dependencies, then start it from the repository root:
+
+```bash
+pip install -r requirements.txt
+streamlit run src/dashboard/app.py
+```
+
+If the dashboard is launched from another directory, point it at this checkout:
+
+```bash
+MARKET_REGIME_DASHBOARD_ROOT=/path/to/Market-Regime-Detection-With-Auto-Model-Switching \
+  streamlit run /path/to/Market-Regime-Detection-With-Auto-Model-Switching/src/dashboard/app.py
+```
+
+It reads persisted local artifacts such as `data/live_sim/`, `data/regimes/`,
+`data/predictions/`, `data/scorecards/`, `data/walkforward/`, the local
+registry, and historical backtest/drift/pipeline artifacts. Existing artifacts
+appear immediately; no recent process needs to be running.
+
+The state badge is deliberately conservative. `LIVE` requires both a fresh
+local heartbeat and the simulator lock. `LATEST KNOWN` is durable state without
+live-loop evidence, `STALE` is a heartbeat older than the configured live
+timeout, and `HISTORICAL` charts are evaluation or backtest artifacts rather
+than current account values. When only those artifacts exist, the state badge
+also reads `HISTORICAL`. Missing artifacts render as unavailable, never as
+synthetic results.
+
 ## Run individual stages
 
 ```bash
