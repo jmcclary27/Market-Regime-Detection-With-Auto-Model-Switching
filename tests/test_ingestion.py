@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -35,7 +37,7 @@ def test_fetch_market_data_normalizes_provider_columns_without_network(
 
     assert list(result.columns) == ["close", "volume"]
     assert result.equals(pd.DataFrame({"close": [100.0, 101.0], "volume": [1_000, 1_100]}))
-    assert cache_locations == ["data/yfinance_cache"]
+    assert [Path(location) for location in cache_locations] == [Path("data/yfinance_cache")]
     assert download_calls == [
         {
             "tickers": "SPY",

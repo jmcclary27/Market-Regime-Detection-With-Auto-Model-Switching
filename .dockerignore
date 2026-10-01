@@ -21,3 +21,8 @@ artifacts/
 *.parquet
 *.joblib
 *.log
+
+# Terraform providers and state are local infrastructure runtime data, not app source.
+**/.terraform/
+*.tfstate
+*.tfstate.*

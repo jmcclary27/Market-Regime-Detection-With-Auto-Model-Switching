@@ -12,14 +12,22 @@ if [ "${S3_SYNC_ENABLED:-false}" = "true" ]; then
   fi
 
   echo "Syncing artifacts from S3 bucket: $ARTIFACT_BUCKET"
-  mkdir -p /app/data/raw /app/models
-  aws s3 sync "s3://${ARTIFACT_BUCKET}/data/raw" /app/data/raw
-  aws s3 sync "s3://${ARTIFACT_BUCKET}/models" /app/models
+  project_root="${PROJECT_ROOT:-/app}"
+  data_dir="${DATA_DIR:-$project_root/data}"
+  mkdir -p "$data_dir/raw" "$project_root/models"
+  aws s3 sync "s3://${ARTIFACT_BUCKET}/data/raw" "$data_dir/raw"
+  aws s3 sync "s3://${ARTIFACT_BUCKET}/models" "$project_root/models"
 fi
 
 case "$cmd" in
   demo)
     exec python -m src.demo.run "$@"
+    ;;
+  dashboard)
+    exec streamlit run src/dashboard/app.py \
+      --server.address=0.0.0.0 \
+      --server.port="${STREAMLIT_PORT:-8501}" \
+      --server.headless=true
     ;;
   pipeline)
     exec python -m src.pipeline.run "$@"

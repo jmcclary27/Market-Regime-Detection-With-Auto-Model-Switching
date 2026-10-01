@@ -220,6 +220,10 @@ def main() -> None:
     root = Path(os.environ.get("MARKET_REGIME_DASHBOARD_ROOT", Path.cwd()))
     st.title("Market Regime Detector")
     st.caption("Local, read-only view of current, latest-known, and historical artifacts.")
+    st.info(
+        "Recruiter demo data is synthetic and offline. This dashboard never places trades or connects "
+        "to a brokerage."
+    )
     snapshot = load_dashboard_snapshot(root)
     st.sidebar.metric("State", snapshot.freshness.label)
     st.sidebar.write(f"Last updated: {_display(snapshot.freshness.updated_at)}")
