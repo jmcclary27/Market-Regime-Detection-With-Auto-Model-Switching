@@ -21,19 +21,38 @@ trading alpha.
 
 ## Quickstart: offline recruiter demo
 
-The default container command is a deterministic, offline demonstration. It
-creates synthetic two-symbol bars, builds features and regimes, trains a local
-baseline, writes the active registry pointer, and runs inference. No AWS,
-market-data, DVC, or pre-existing model state is required.
+Run this from Git Bash, WSL, or another Bash shell with Docker Desktop running:
 
 ```bash
-docker compose build
-docker compose run --rm market
+bash scripts/run_recruiter_demo.sh
 ```
 
-The command prints the generated raw data, features, regime labels, registry,
-and predictions. These outputs live under `data/`, `models/`, `registry/`, and
-`mlruns/`; they are local runtime state and intentionally excluded from Git.
+The helper resets only its dedicated Docker volume, builds the image, runs the
+canonical deterministic offline pipeline, starts the dashboard, and verifies
+`http://localhost:8501/_stcore/health`. Open
+[`http://localhost:8501`](http://localhost:8501) after it finishes.
+
+The demo creates synthetic market bars, features, rule-based regimes, active
+and shadow predictions, scorecards, walk-forward evaluation, a guarded
+`no_promotable_challenger` hold, registry history, drift/telemetry, and lineage.
+All runtime files—including MLflow—live only in the named Docker volume, so an
+existing host `mlruns/` directory (including Windows paths) cannot contaminate
+the Linux container. No AWS, market-data provider, brokerage, DVC remote, or
+pre-existing model state is used.
+
+Stop the dashboard and remove the demo data when finished:
+
+```bash
+docker compose --project-name market-regime-recruiter-demo down --volumes --remove-orphans
+```
+
+For the underlying container commands without the helper:
+
+```bash
+docker compose --project-name market-regime-recruiter-demo build
+docker compose --project-name market-regime-recruiter-demo run --rm market demo
+docker compose --project-name market-regime-recruiter-demo up dashboard
+```
 
 To run it without Docker:
 
@@ -47,7 +66,7 @@ python -m src.demo.run
 The dashboard is a local, read-only browser view over artifacts already written
 by the offline pipeline, evaluation, registry, and optional paper live
 simulation. It does not start a market-data poller, trading loop, inference
-job, or AWS service.
+job, or AWS service; the recruiter workflow is synthetic and paper-only.
 
 Install dependencies, then start it from the repository root:
 
