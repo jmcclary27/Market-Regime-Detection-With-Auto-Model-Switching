@@ -87,6 +87,12 @@ It reads persisted local artifacts such as `data/live_sim/`, `data/regimes/`,
 registry, and historical backtest/drift/pipeline artifacts. Existing artifacts
 appear immediately; no recent process needs to be running.
 
+The dashboard refreshes every 30 seconds and has a manual refresh control. It
+labels deterministic offline runs as `offline/demo` and normal pipeline runs
+as `real`; both use the same artifact contract. The Models tab distinguishes
+the registry pointer active now from the model that produced the latest active
+prediction, warning when a promotion changed the pointer after inference.
+
 The state badge is deliberately conservative. `LIVE` requires both a fresh
 local heartbeat and the simulator lock. `LATEST KNOWN` is durable state without
 live-loop evidence, `STALE` is a heartbeat older than the configured live
@@ -94,6 +100,35 @@ timeout, and `HISTORICAL` charts are evaluation or backtest artifacts rather
 than current account values. When only those artifacts exist, the state badge
 also reads `HISTORICAL`. Missing artifacts render as unavailable, never as
 synthetic results.
+
+### View a real pipeline run
+
+Run the dashboard and pipeline against the same project root. A normal pipeline
+run fetches the configured market data and requires a valid published active
+model in `registry/active_model.yaml`; it preserves the existing evaluation and
+promotion policy and can validly result in a hold or blocked decision.
+
+```bash
+streamlit run src/dashboard/app.py
+python -m src.pipeline.run --run-ts "$(date -u +%Y%m%d_%H%M%SZ)"
+```
+
+Open the dashboard at `http://localhost:8501` (or refresh an existing page).
+It will show the persisted predictions, active-model pointer and serving
+status, evaluation/scorecard, promotion decision, and run history. To use a
+different artifact root, point both commands at it:
+
+```bash
+export PROJECT_ROOT=/path/to/runtime
+export DATA_DIR="$PROJECT_ROOT/data"
+MARKET_REGIME_DASHBOARD_ROOT="$PROJECT_ROOT" streamlit run src/dashboard/app.py
+PROJECT_ROOT="$PROJECT_ROOT" DATA_DIR="$DATA_DIR" python -m src.pipeline.run
+```
+
+The Compose dashboard reads the `market_runtime` Docker volume at `/runtime`.
+Therefore a host-local pipeline run writes to the host checkout and must be
+viewed with a host-local Streamlit process (or an explicitly matching dashboard
+root); it is not visible to the isolated Compose dashboard volume.
 
 ## Run individual stages
 

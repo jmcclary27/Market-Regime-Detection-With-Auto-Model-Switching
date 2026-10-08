@@ -161,3 +161,117 @@ def test_loader_reads_historical_and_registry_artifacts_independently(tmp_path: 
     assert snapshot.backtest is not None
     assert snapshot.active_model is not None
     assert snapshot.active_model.model_id == "expert_sideways"
+
+
+def test_loader_exposes_real_run_history_prediction_context_and_promotion(tmp_path: Path) -> None:
+    regimes = tmp_path / "data/regimes/latest.parquet"
+    regimes.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "timestamp": ["2026-07-14T00:00:00Z", "2026-07-15T00:00:00Z"],
+            "regime": ["bearish", "bullish"],
+        }
+    ).to_parquet(regimes, index=False)
+    predictions = tmp_path / "data/predictions/latest.parquet"
+    predictions.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "row_id": [0, 1],
+            "model_name": ["expert_bullish", "expert_bullish"],
+            "model_source": ["expert", "expert"],
+            "model_path": ["models/experts/bullish/model.joblib"] * 2,
+            "active_model_id": ["expert_bullish"] * 2,
+            "active_model_type": ["expert"] * 2,
+            "active_model_version": ["v3"] * 2,
+            "active_regime": ["bullish"] * 2,
+            "inference_ts": [20260715000000, 20260715000000],
+            "y_pred": [0.01, 0.02],
+            "is_active": [True, True],
+        }
+    ).to_parquet(predictions, index=False)
+    active = tmp_path / "registry/active_model.yaml"
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text(
+        "active:\n  model_type: expert\n  model_id: expert_bullish\n  version: v3\n"
+        "  artifact_path: models/experts/bullish/model.joblib\n  regime: bullish\n"
+        "updated_at: '2026-07-15T00:00:00Z'\n",
+        encoding="utf-8",
+    )
+    promotion_path = tmp_path / "data/walkforward/promotion_real.json"
+    _write_json(
+        promotion_path,
+        {
+            "run_ts": "real-run",
+            "promoted": False,
+            "reason": "canary_window_incomplete",
+            "promotion_config": {"min_sharpe_delta": 0.1},
+        },
+    )
+    _write_json(
+        tmp_path / "artifacts/pipeline_runs/pipeline_run_lexically_last.json",
+        {
+            "run_ts": "older-real-run",
+            "offline": False,
+            "status": "completed",
+            "finished_at_utc": "2026-07-14T00:00:00Z",
+            "artifacts": {},
+        },
+    )
+    _write_json(
+        tmp_path / "artifacts/pipeline_runs/pipeline_run_lexically_first.json",
+        {
+            "run_ts": "real-run",
+            "offline": False,
+            "status": "completed",
+            "finished_at_utc": "2026-07-15T00:00:00Z",
+            "artifacts": {"promotion_decision_json": str(promotion_path)},
+        },
+    )
+
+    snapshot = load_dashboard_snapshot(tmp_path, now=NOW)
+
+    assert [run["run_ts"] for run in snapshot.pipeline_runs] == ["real-run", "older-real-run"]
+    assert snapshot.pipeline_summary is not None
+    assert snapshot.pipeline_summary["run_ts"] == "real-run"
+    assert snapshot.promotion is not None
+    assert snapshot.promotion["reason"] == "canary_window_incomplete"
+    assert snapshot.predictions is not None
+    assert snapshot.predictions.loc[1, "timestamp"] == "2026-07-15T00:00:00Z"
+    assert snapshot.predictions.loc[1, "market_regime"] == "bullish"
+    assert snapshot.serving_status["label"] == "SERVING"
+
+
+def test_loader_marks_predictions_stale_when_registry_changes_after_inference(
+    tmp_path: Path,
+) -> None:
+    regimes = tmp_path / "data/regimes/latest.parquet"
+    regimes.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"timestamp": ["2026-07-15T00:00:00Z"], "regime": ["bullish"]}).to_parquet(
+        regimes, index=False
+    )
+    predictions = tmp_path / "data/predictions/latest.parquet"
+    predictions.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "row_id": [0],
+            "model_name": ["expert_bullish"],
+            "active_model_id": ["expert_bullish"],
+            "active_model_type": ["expert"],
+            "active_model_version": ["v3"],
+            "inference_ts": [20260715000000],
+            "y_pred": [0.01],
+            "is_active": [True],
+        }
+    ).to_parquet(predictions, index=False)
+    active = tmp_path / "registry/active_model.yaml"
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text(
+        "active:\n  model_type: expert\n  model_id: expert_bullish\n  version: v4\n"
+        "  artifact_path: models/experts/bullish/model-v4.joblib\n  regime: bullish\n",
+        encoding="utf-8",
+    )
+
+    snapshot = load_dashboard_snapshot(tmp_path, now=NOW)
+
+    assert snapshot.serving_status["label"] == "STALE PREDICTION"
+    assert snapshot.serving_status["latest_prediction_model"]["version"] == "v3"
