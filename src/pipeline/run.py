@@ -231,6 +231,7 @@ def run_pipeline(
         run_ts=cfg.run_ts,
         mode=cfg.mode,
         replay=replay,
+        offline=cfg.offline,
         replay_ts=replay_subject_run_ts if replay else None,
     )
     try:

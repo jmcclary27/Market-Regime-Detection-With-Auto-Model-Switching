@@ -54,3 +54,13 @@ def test_offline_demo_is_deterministic_from_empty_working_directories(tmp_path: 
         column for column in first.columns if column not in {"features_path", "model_path"}
     ]
     pd.testing.assert_frame_equal(first[comparable_columns], second[comparable_columns])
+
+
+def test_pipeline_summary_records_offline_provenance() -> None:
+    from src.pipeline.telemetry import PipelineRunRecorder
+
+    summary = PipelineRunRecorder(
+        run_ts="20260715_000000Z", mode="pipeline", replay=False, offline=True
+    ).build_summary(status="completed", artifacts={})
+
+    assert summary["offline"] is True

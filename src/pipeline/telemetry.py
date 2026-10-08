@@ -16,6 +16,7 @@ class PipelineRunRecorder:
     run_ts: str
     mode: str
     replay: bool
+    offline: bool = False
     replay_ts: str | None = None
     started_at_utc: str = field(default_factory=utc_now_iso)
     steps: list[dict[str, Any]] = field(default_factory=list)
@@ -59,6 +60,7 @@ class PipelineRunRecorder:
             "run_ts": self.run_ts,
             "mode": self.mode,
             "replay": self.replay,
+            "offline": self.offline,
             "replay_ts": self.replay_ts,
             "status": status,
             "started_at_utc": self.started_at_utc,

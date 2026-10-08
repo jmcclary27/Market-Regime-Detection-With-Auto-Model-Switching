@@ -27,6 +27,7 @@ class DashboardPaths:
     predictions: Path
     scorecard: Path
     walkforward: Path
+    promotion: Path
     deployments: Path
     registry_active: Path
     registry_history: Path
@@ -49,6 +50,7 @@ class DashboardPaths:
             predictions=project_root / "data/predictions/latest.parquet",
             scorecard=project_root / "data/scorecards/latest.json",
             walkforward=project_root / "data/walkforward/latest.parquet",
+            promotion=project_root / "data/walkforward/latest_promotion.json",
             deployments=project_root / "data/deployments/events.parquet",
             registry_active=project_root / "registry/active_model.yaml",
             registry_history=project_root / "registry/history.parquet",
@@ -74,6 +76,8 @@ class DashboardSnapshot:
     account: dict[str, Any] | None
     active_model: ActiveModelRef | None
     scorecard: dict[str, Any] | None
+    promotion: dict[str, Any] | None
+    serving_status: dict[str, Any]
     drift: dict[str, Any] | None
     equity: pd.DataFrame | None
     trades: pd.DataFrame | None
@@ -84,6 +88,7 @@ class DashboardSnapshot:
     registry_history: pd.DataFrame | None
     backtest: pd.DataFrame | None
     pipeline_summary: dict[str, Any] | None
+    pipeline_runs: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -208,11 +213,122 @@ def _latest_backtest(directory: Path, warnings: list[str]) -> pd.DataFrame | Non
     return _read_parquet(candidates[-1], "latest historical backtest", warnings)
 
 
-def _latest_pipeline_summary(directory: Path, warnings: list[str]) -> dict[str, Any] | None:
-    candidates = sorted(directory.glob("pipeline_run*.json"))
-    if not candidates:
+def _summary_sort_key(summary: dict[str, Any]) -> tuple[datetime, str]:
+    for field_name in ("finished_at_utc", "started_at_utc"):
+        parsed = _as_utc(summary.get(field_name))
+        if parsed is not None:
+            return parsed, str(summary.get("run_ts", ""))
+    return datetime.min.replace(tzinfo=UTC), str(summary.get("run_ts", ""))
+
+
+def _pipeline_summaries(directory: Path, warnings: list[str]) -> list[dict[str, Any]]:
+    if not directory.exists():
+        return []
+    summaries: list[dict[str, Any]] = []
+    for path in directory.glob("pipeline_run*.json"):
+        summary = _read_json(path, f"pipeline summary {path.name}", warnings)
+        if summary is None:
+            continue
+        summary = dict(summary)
+        summary["summary_path"] = str(path)
+        summaries.append(summary)
+    return sorted(summaries, key=_summary_sort_key, reverse=True)
+
+
+def _resolve_artifact_path(root: Path, raw_path: Any) -> Path | None:
+    if raw_path in (None, ""):
         return None
-    return _read_json(candidates[-1], "latest pipeline summary", warnings)
+    path = Path(str(raw_path))
+    return path if path.is_absolute() else root / path
+
+
+def _promotion_for_summary(
+    root: Path,
+    summary: dict[str, Any] | None,
+    fallback_path: Path,
+    warnings: list[str],
+) -> dict[str, Any] | None:
+    artifact_path: Path | None = None
+    if summary is not None:
+        artifacts = summary.get("artifacts")
+        if isinstance(artifacts, dict):
+            artifact_path = _resolve_artifact_path(root, artifacts.get("promotion_decision_json"))
+    if artifact_path is not None and artifact_path.exists():
+        return _read_json(artifact_path, "latest promotion decision", warnings)
+    return _read_json(fallback_path, "latest promotion decision", warnings)
+
+
+def _attach_prediction_context(
+    predictions: pd.DataFrame | None,
+    regimes: pd.DataFrame | None,
+    warnings: list[str],
+) -> pd.DataFrame | None:
+    """Attach the existing row-id-aligned market timestamp and regime for presentation only."""
+    if predictions is None or predictions.empty:
+        return predictions
+    if regimes is None or regimes.empty:
+        warnings.append(
+            "Could not attach market timestamp/regime: no regime artifact is available."
+        )
+        return predictions
+    if "row_id" not in predictions.columns:
+        warnings.append("Could not attach market timestamp/regime: predictions have no row_id.")
+        return predictions
+    if not {"timestamp", "regime"}.issubset(regimes.columns):
+        warnings.append("Could not attach market timestamp/regime: regime columns are unavailable.")
+        return predictions
+
+    context = regimes.loc[:, ["timestamp", "regime"]].reset_index(names="row_id")
+    context = context.rename(columns={"regime": "market_regime"})
+    out = predictions.merge(context, on="row_id", how="left", validate="many_to_one")
+    if out["timestamp"].isna().any():
+        warnings.append("Some predictions could not be matched to a market timestamp/regime.")
+    return out
+
+
+def _serving_status(
+    active_model: ActiveModelRef | None,
+    predictions: pd.DataFrame | None,
+) -> dict[str, Any]:
+    if active_model is None:
+        return {
+            "label": "UNAVAILABLE",
+            "detail": "No valid active-model registry pointer is available.",
+        }
+    if predictions is None or predictions.empty or "is_active" not in predictions.columns:
+        return {
+            "label": "PENDING INFERENCE",
+            "detail": "Registry pointer is valid, but no active prediction artifact is available yet.",
+        }
+    active_rows = predictions.loc[predictions["is_active"].fillna(False).astype(bool)]
+    latest = _latest_row(active_rows, "inference_ts")
+    if latest is None:
+        return {
+            "label": "PENDING INFERENCE",
+            "detail": "Latest predictions do not contain an active-model row.",
+        }
+    used = {
+        "model_id": latest.get("active_model_id") or latest.get("model_name"),
+        "model_type": latest.get("active_model_type"),
+        "version": latest.get("active_model_version"),
+        "inference_ts": latest.get("inference_ts"),
+    }
+    matches = (
+        str(used["model_id"]) == active_model.model_id
+        and str(used["model_type"]) == active_model.model_type
+        and str(used["version"]) == active_model.version
+    )
+    if matches:
+        return {
+            "label": "SERVING",
+            "detail": "The latest active prediction matches the current registry pointer.",
+            "latest_prediction_model": used,
+        }
+    return {
+        "label": "STALE PREDICTION",
+        "detail": "The registry changed after the latest prediction; run inference before treating it as served by the current model.",
+        "latest_prediction_model": used,
+    }
 
 
 def _read_active_model(path: Path, warnings: list[str]) -> ActiveModelRef | None:
@@ -305,8 +421,22 @@ def load_dashboard_snapshot(
         dashboard_paths.predictions,
         "prediction history",
         warnings,
-        columns=["row_id", "model_name", "active_model_id", "y_pred", "is_active", "signal"],
+        columns=[
+            "row_id",
+            "model_name",
+            "model_source",
+            "model_path",
+            "active_model_id",
+            "active_model_type",
+            "active_model_version",
+            "active_regime",
+            "inference_ts",
+            "y_pred",
+            "is_active",
+            "signal",
+        ],
     )
+    predictions = _attach_prediction_context(predictions, regimes, warnings)
     scorecard = _read_json(dashboard_paths.scorecard, "latest scorecard", warnings)
     walkforward = _read_parquet(dashboard_paths.walkforward, "walk-forward metrics", warnings)
     deployments = _read_parquet(dashboard_paths.deployments, "deployment history", warnings)
@@ -314,7 +444,12 @@ def load_dashboard_snapshot(
     drift = _read_json(dashboard_paths.drift, "drift snapshot", warnings)
     active_model = _read_active_model(dashboard_paths.registry_active, warnings)
     backtest = _latest_backtest(dashboard_paths.backtests, warnings)
-    pipeline_summary = _latest_pipeline_summary(dashboard_paths.pipeline_runs, warnings)
+    pipeline_runs = _pipeline_summaries(dashboard_paths.pipeline_runs, warnings)
+    pipeline_summary = pipeline_runs[0] if pipeline_runs else None
+    promotion = _promotion_for_summary(
+        dashboard_paths.root, pipeline_summary, dashboard_paths.promotion, warnings
+    )
+    serving_status = _serving_status(active_model, predictions)
     has_state = any(item is not None for item in (account, equity, trades, regimes, predictions))
     has_historical_data = any(
         item is not None
@@ -327,6 +462,7 @@ def load_dashboard_snapshot(
             drift,
             backtest,
             pipeline_summary,
+            promotion,
         )
     )
     freshness = _freshness(
@@ -343,6 +479,8 @@ def load_dashboard_snapshot(
         account=account,
         active_model=active_model,
         scorecard=scorecard,
+        promotion=promotion,
+        serving_status=serving_status,
         drift=drift,
         equity=equity,
         trades=trades,
@@ -353,5 +491,6 @@ def load_dashboard_snapshot(
         registry_history=registry_history,
         backtest=backtest,
         pipeline_summary=pipeline_summary,
+        pipeline_runs=pipeline_runs,
         warnings=warnings,
     )

@@ -9,6 +9,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from src.dashboard.data import load_dashboard_snapshot
+
 
 @pytest.mark.integration
 def test_offline_pipeline_writes_complete_safe_hold_artifact_set(tmp_path: Path) -> None:
@@ -78,3 +80,17 @@ def test_offline_pipeline_writes_complete_safe_hold_artifact_set(tmp_path: Path)
     pd.testing.assert_frame_equal(
         first_predictions[comparable_columns], second_predictions[comparable_columns]
     )
+
+    first_snapshot = load_dashboard_snapshot(tmp_path / "first")
+    restarted_snapshot = load_dashboard_snapshot(tmp_path / "first")
+    assert first_snapshot.pipeline_summary is not None
+    assert first_snapshot.pipeline_summary["run_ts"] == run_ts
+    assert first_snapshot.pipeline_summary["offline"] is True
+    assert first_snapshot.predictions is not None and not first_snapshot.predictions.empty
+    assert first_snapshot.scorecard is not None
+    assert first_snapshot.promotion is not None
+    assert first_snapshot.active_model is not None
+    assert first_snapshot.serving_status["label"] == "SERVING"
+    assert restarted_snapshot.pipeline_summary == first_snapshot.pipeline_summary
+    assert restarted_snapshot.predictions is not None
+    assert len(restarted_snapshot.predictions) == len(first_snapshot.predictions)

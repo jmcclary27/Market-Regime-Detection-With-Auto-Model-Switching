@@ -150,6 +150,11 @@ def _regimes(snapshot: DashboardSnapshot) -> None:
 
 def _models(snapshot: DashboardSnapshot) -> None:
     st.subheader("Active model and evaluation")
+    serving = snapshot.serving_status
+    if serving["label"] == "SERVING":
+        st.success(f"Serving status: {serving['label']} — {serving['detail']}")
+    else:
+        st.warning(f"Serving status: {serving['label']} — {serving['detail']}")
     if snapshot.active_model is None:
         st.info("No valid active-model registry pointer is available.")
     else:
@@ -163,6 +168,10 @@ def _models(snapshot: DashboardSnapshot) -> None:
                 "updated_at": snapshot.active_model.updated_at,
             }
         )
+    used = serving.get("latest_prediction_model")
+    if isinstance(used, dict):
+        st.caption("Model used by the latest active prediction")
+        st.json(used)
     scorecard = _scorecard_table(snapshot.scorecard)
     if scorecard is not None:
         st.caption("Historical evaluation scorecard; lower MAE/RMSE is better.")
@@ -175,6 +184,9 @@ def _models(snapshot: DashboardSnapshot) -> None:
     if snapshot.deployments is not None and not snapshot.deployments.empty:
         st.caption("Model switching and deployment decisions")
         st.dataframe(snapshot.deployments.tail(100), use_container_width=True)
+    if snapshot.promotion is not None:
+        st.caption("Latest promotion policy decision and evidence")
+        st.json(snapshot.promotion)
 
 
 def _trading(snapshot: DashboardSnapshot) -> None:
@@ -186,10 +198,27 @@ def _trading(snapshot: DashboardSnapshot) -> None:
     if snapshot.predictions is not None and not snapshot.predictions.empty:
         columns = [
             column
-            for column in ("row_id", "model_name", "active_model_id", "y_pred", "is_active")
+            for column in (
+                "timestamp",
+                "market_regime",
+                "row_id",
+                "model_name",
+                "model_source",
+                "active_model_id",
+                "active_model_type",
+                "active_model_version",
+                "active_regime",
+                "inference_ts",
+                "y_pred",
+                "is_active",
+                "signal",
+            )
             if column in snapshot.predictions
         ]
-        st.caption("Persisted predictions (active rows are marked by the producer)")
+        st.caption(
+            "Persisted predictions with market timestamp/regime and inference model provenance "
+            "(active rows are marked by the producer)."
+        )
         st.dataframe(snapshot.predictions.loc[:, columns].tail(100), use_container_width=True)
 
 
@@ -210,24 +239,35 @@ def _health(snapshot: DashboardSnapshot) -> None:
     if snapshot.pipeline_summary is not None:
         st.caption("Latest persisted pipeline run")
         st.json(snapshot.pipeline_summary)
+    if snapshot.pipeline_runs:
+        rows = [
+            {
+                "run_ts": run.get("run_ts"),
+                "run_kind": "offline/demo" if run.get("offline") else "real",
+                "mode": run.get("mode"),
+                "replay": run.get("replay"),
+                "status": run.get("status"),
+                "started_at_utc": run.get("started_at_utc"),
+                "finished_at_utc": run.get("finished_at_utc"),
+                "duration_seconds": run.get("duration_seconds"),
+                "error": run.get("error"),
+            }
+            for run in snapshot.pipeline_runs
+        ]
+        st.caption("Pipeline execution history")
+        st.dataframe(pd.DataFrame(rows), use_container_width=True)
     if snapshot.registry_history is not None and not snapshot.registry_history.empty:
         st.caption("Registry pointer history")
         st.dataframe(snapshot.registry_history.tail(100), use_container_width=True)
 
 
-def main() -> None:
-    st.set_page_config(page_title="Market Regime Dashboard", layout="wide")
-    root = Path(os.environ.get("MARKET_REGIME_DASHBOARD_ROOT", Path.cwd()))
-    st.title("Market Regime Detector")
-    st.caption("Local, read-only view of current, latest-known, and historical artifacts.")
-    st.info(
-        "Recruiter demo data is synthetic and offline. This dashboard never places trades or connects "
-        "to a brokerage."
-    )
+def _render_dashboard(root: Path) -> None:
     snapshot = load_dashboard_snapshot(root)
-    st.sidebar.metric("State", snapshot.freshness.label)
-    st.sidebar.write(f"Last updated: {_display(snapshot.freshness.updated_at)}")
-    st.sidebar.caption(f"Project root: {root.resolve()}")
+    st.caption(
+        f"State: {snapshot.freshness.label} · Last updated: {_display(snapshot.freshness.updated_at)}"
+    )
+    if st.button("Refresh now"):
+        pass
     if snapshot.warnings:
         with st.expander(f"Artifact warnings ({len(snapshot.warnings)})"):
             for warning in snapshot.warnings:
@@ -247,6 +287,30 @@ def main() -> None:
         _trading(snapshot)
     with health:
         _health(snapshot)
+
+
+def main() -> None:
+    st.set_page_config(page_title="Market Regime Dashboard", layout="wide")
+    root = Path(os.environ.get("MARKET_REGIME_DASHBOARD_ROOT", Path.cwd()))
+    st.title("Market Regime Detector")
+    st.caption("Local, read-only view of real and offline/demo pipeline artifacts.")
+    st.info(
+        "This dashboard never places trades or connects to a brokerage. Offline/demo runs are labeled "
+        "explicitly; real runs use the same durable artifact schema."
+    )
+    st.sidebar.caption(f"Project root: {root.resolve()}")
+    st.sidebar.caption("Refreshes every 30 seconds while this page is open.")
+
+    fragment = getattr(st, "fragment", None) or getattr(st, "experimental_fragment", None)
+    if fragment is None:  # pragma: no cover - supported Streamlit releases provide a fragment API.
+        _render_dashboard(root)
+        return
+
+    @fragment(run_every=30)
+    def refreshable_dashboard() -> None:
+        _render_dashboard(root)
+
+    refreshable_dashboard()
 
 
 if __name__ == "__main__":
