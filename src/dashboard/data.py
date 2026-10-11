@@ -89,6 +89,7 @@ class DashboardSnapshot:
     backtest: pd.DataFrame | None
     pipeline_summary: dict[str, Any] | None
     pipeline_runs: list[dict[str, Any]] = field(default_factory=list)
+    demo_scenarios: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -233,6 +234,22 @@ def _pipeline_summaries(directory: Path, warnings: list[str]) -> list[dict[str, 
         summary["summary_path"] = str(path)
         summaries.append(summary)
     return sorted(summaries, key=_summary_sort_key, reverse=True)
+
+
+def _demo_scenarios(root: Path, warnings: list[str]) -> list[dict[str, Any]]:
+    """Read completed demo evidence manifests without consulting mutable latest aliases."""
+    directory = root / "artifacts" / "demo" / "scenarios"
+    if not directory.exists():
+        return []
+    scenarios: list[dict[str, Any]] = []
+    for path in sorted(directory.glob("*.json")):
+        scenario = _read_json(path, f"demo scenario {path.name}", warnings)
+        if scenario is None:
+            continue
+        scenario = dict(scenario)
+        scenario["manifest_path"] = str(path)
+        scenarios.append(scenario)
+    return scenarios
 
 
 def _resolve_artifact_path(root: Path, raw_path: Any) -> Path | None:
@@ -445,6 +462,7 @@ def load_dashboard_snapshot(
     active_model = _read_active_model(dashboard_paths.registry_active, warnings)
     backtest = _latest_backtest(dashboard_paths.backtests, warnings)
     pipeline_runs = _pipeline_summaries(dashboard_paths.pipeline_runs, warnings)
+    demo_scenarios = _demo_scenarios(dashboard_paths.root, warnings)
     pipeline_summary = pipeline_runs[0] if pipeline_runs else None
     promotion = _promotion_for_summary(
         dashboard_paths.root, pipeline_summary, dashboard_paths.promotion, warnings
@@ -492,5 +510,6 @@ def load_dashboard_snapshot(
         backtest=backtest,
         pipeline_summary=pipeline_summary,
         pipeline_runs=pipeline_runs,
+        demo_scenarios=demo_scenarios,
         warnings=warnings,
     )

@@ -187,6 +187,34 @@ def _models(snapshot: DashboardSnapshot) -> None:
     if snapshot.promotion is not None:
         st.caption("Latest promotion policy decision and evidence")
         st.json(snapshot.promotion)
+    if snapshot.demo_scenarios:
+        st.caption("Immutable end-to-end demo scenario evidence")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "scenario": item.get("scenario"),
+                        "status": item.get("status"),
+                        "promoted": item.get("promotion", {}).get("promoted"),
+                        "reason": item.get("promotion", {}).get("reason"),
+                        "verified_active_model_id": item.get("post_promotion_inference", {}).get(
+                            "verified_active_model_id"
+                        ),
+                    }
+                    for item in snapshot.demo_scenarios
+                ]
+            ),
+            use_container_width=True,
+        )
+        for item in snapshot.demo_scenarios:
+            with st.expander(f"{item.get('scenario', 'demo')} policy evidence"):
+                promotion = item.get("promotion")
+                if isinstance(promotion, dict):
+                    st.json(promotion)
+                post_switch = item.get("post_promotion_inference")
+                if isinstance(post_switch, dict):
+                    st.caption("Post-switch inference provenance")
+                    st.json(post_switch)
 
 
 def _trading(snapshot: DashboardSnapshot) -> None:

@@ -16,7 +16,8 @@ def test_compose_recruiter_demo_uses_an_isolated_named_runtime_volume() -> None:
     assert market["environment"]["PROJECT_ROOT"] == "/runtime"
     assert market["environment"]["DATA_DIR"] == "/runtime/data"
     assert market["environment"]["MLFLOW_TRACKING_URI"] == "file:/runtime/mlruns"
-    assert market["volumes"] == ["market_runtime:/runtime"]
+    assert market["environment"]["DEMO_MODEL_SOURCE_ROOT"] == "/model-source"
+    assert market["volumes"] == ["market_runtime:/runtime", "./models:/model-source:ro"]
     assert dashboard["environment"]["MARKET_REGIME_DASHBOARD_ROOT"] == "/runtime"
     assert dashboard["volumes"] == ["market_runtime:/runtime"]
     assert "market_runtime" in compose["volumes"]
