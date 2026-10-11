@@ -10,11 +10,13 @@ services:
       DATA_DIR: /runtime/data
       PYTHONPATH: /app
       MLFLOW_TRACKING_URI: file:/runtime/mlruns
+      DEMO_MODEL_SOURCE_ROOT: /model-source
       RUFF_CACHE_DIR: /tmp/ruff_cache
       PYTEST_ADDOPTS: -o cache_dir=/tmp/pytest_cache
       MYPY_CACHE_DIR: /tmp/mypy_cache
     volumes:
       - market_runtime:/runtime
+      - ./models:/model-source:ro
 
   dashboard:
     build: .

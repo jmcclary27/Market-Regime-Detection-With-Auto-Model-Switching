@@ -48,6 +48,11 @@ class PipelineConfig:
     run_ts: str
     mode: PipelineMode
     offline: bool = False
+    # A demo is still an offline pipeline run, but it deliberately uses the
+    # production HMM/models supplied by its isolated runtime rather than the
+    # generic offline baseline bootstrap.
+    demo: bool = False
+    demo_scenario: str | None = None
 
 
 def utc_timestamp() -> str:
@@ -95,6 +100,8 @@ def build_config(args: argparse.Namespace) -> PipelineConfig:
         run_ts=run_ts,
         mode=mode,
         offline=bool(args.offline),
+        demo=bool(args.demo),
+        demo_scenario=args.demo_scenario,
     )
 
 
@@ -120,7 +127,7 @@ def _write_runtime_settings(cfg: PipelineConfig) -> Path:
     hmm = dict(regimes.get("hmm", {}))
     hmm["artifacts_dir"] = str(cfg.project_root / "models" / "regimes" / "hmm")
     regimes["hmm"] = hmm
-    if cfg.offline:
+    if cfg.offline and not cfg.demo:
         regimes["method"] = "rules"
     settings["regimes"] = regimes
 
@@ -491,7 +498,7 @@ def run_pipeline(
 
             step("regime_diagnostics", _regime_diagnostics, recorder=recorder)
 
-        if cfg.offline:
+        if cfg.offline and not cfg.demo:
 
             def _bootstrap_offline_baseline() -> None:
                 if features_parquet is None:
@@ -563,7 +570,7 @@ def run_pipeline(
                     else f"run_{cfg.run_ts}.json"
                 ),
                 record_features_path=recorded_features_path,
-                include_discovered_models=not cfg.offline,
+                include_discovered_models=not cfg.offline or cfg.demo,
             )
             if replay:
                 assert predictions_parquet is not None
@@ -770,7 +777,7 @@ def run_pipeline(
                 incumbent_model_name: str | None = os.getenv(
                     "PROMOTION_INCUMBENT_MODEL", "baseline"
                 )
-                if cfg.offline:
+                if cfg.offline and not cfg.demo:
                     challenger_model_name = None
 
                 challenger_ref = ActiveModelRef(
@@ -862,6 +869,9 @@ def run_pipeline(
             },
             error=run_error,
         )
+        if cfg.demo:
+            summary["demo"] = True
+            summary["demo_scenario"] = cfg.demo_scenario
         write_pipeline_run_summary(pipeline_run_json, summary)
 
         if not replay and all(
@@ -891,6 +901,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run full local pipeline")
     parser.add_argument(
         "--run-ts", default=None, help="Optional shared timestamp, e.g. 20260112_141530Z"
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run the isolated demo profile with supplied published HMM/expert artifacts.",
+    )
+    parser.add_argument(
+        "--demo-scenario",
+        default=None,
+        help="Optional durable scenario label for an isolated demo run.",
     )
     parser.add_argument(
         "--mode",
@@ -926,6 +946,8 @@ def main(argv: list[str] | None = None) -> int:
             run_ts=str(args.replay),
             mode="pipeline",
             offline=cfg.offline,
+            demo=cfg.demo,
+            demo_scenario=cfg.demo_scenario,
         )
 
     run_pipeline(cfg, replay=bool(args.replay), replay_ts=args.replay)
